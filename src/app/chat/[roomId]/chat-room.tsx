@@ -5,8 +5,23 @@ import {
   type RealtimeChannel,
 } from "@supabase/supabase-js";
 import Link from "next/link";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  Fragment,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type FormEvent,
+} from "react";
 import { Avatar } from "@/components/avatar";
+import {
+  ChevronLeftIcon,
+  CloseIcon,
+  EditIcon,
+  PeopleIcon,
+  SendIcon,
+  TrashIcon,
+} from "@/components/icons";
 import { createClient } from "@/lib/supabase/client";
 import { subscribeToChannel } from "@/lib/supabase/realtime";
 import {
@@ -60,6 +75,7 @@ export function ChatRoom({
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const hydrated = useHydrated();
 
   const channelRef = useRef<RealtimeChannel | null>(null);
   const lastTypingSentRef = useRef(0);
@@ -295,129 +311,209 @@ export function ChatRoom({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex items-center gap-3 border-b border-border bg-surface px-4 py-3">
-        <Link
-          href="/chat"
-          aria-label="Back to rooms"
-          className="-ml-1 rounded-md px-2 py-1 text-muted hover:bg-hover md:hidden"
-        >
-          ←
+      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-surface px-3 sm:px-5">
+        <Link href="/chat" aria-label="Back to rooms" className="icon-btn -ml-1 md:hidden">
+          <ChevronLeftIcon />
         </Link>
-        <div className="min-w-0 flex-1">
-          <h2 className="truncate font-semibold">
-            <span className="text-muted">#</span> {room.name}
-          </h2>
-          <p className="flex items-center gap-1.5 text-xs text-muted">
+        <Avatar id={room.id} name={room.name} shape="square" />
+        <h2 className="min-w-0 truncate font-semibold">{room.name}</h2>
+        <nav aria-label="Room views" className="hidden self-stretch sm:flex">
+          <span
+            aria-current="page"
+            className="relative flex items-center px-3 text-sm font-semibold after:absolute after:inset-x-3 after:bottom-0 after:h-[3px] after:rounded-t-full after:bg-accent-text"
+          >
+            Chat
+          </span>
+        </nav>
+
+        <div className="ml-auto flex shrink-0 items-center gap-3">
+          {status !== "live" && (
             <span
-              className={`h-2 w-2 rounded-full ${
-                status === "live"
-                  ? "bg-success"
-                  : status === "connecting"
-                    ? "animate-pulse bg-amber-500"
-                    : "bg-danger"
+              className={`flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs ${
+                status === "connecting"
+                  ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                  : "bg-danger/10 text-danger"
               }`}
-            />
-            {status === "live"
-              ? `${online.length} online`
-              : status === "connecting"
-                ? "Connecting…"
-                : "Reconnecting…"}
-          </p>
-        </div>
-        <div
-          className="flex -space-x-2"
-          title={online.map((u) => u.username).join(", ")}
-        >
-          {online.slice(0, 5).map((u) => (
-            <Avatar key={u.id} id={u.id} name={u.username} size="sm" className="ring-2 ring-surface" />
-          ))}
-          {online.length > 5 && (
-            <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-hover text-[10px] font-medium ring-2 ring-surface">
-              +{online.length - 5}
+            >
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${
+                  status === "connecting" ? "animate-pulse bg-amber-500" : "bg-danger"
+                }`}
+              />
+              {status === "connecting" ? "Connecting…" : "Reconnecting…"}
             </span>
           )}
+          <div
+            className="flex items-center gap-2"
+            title={online.map((u) => u.username).join(", ")}
+          >
+            <div className="hidden -space-x-1.5 sm:flex">
+              {online.slice(0, 4).map((u) => (
+                <Avatar
+                  key={u.id}
+                  id={u.id}
+                  name={u.username}
+                  size="sm"
+                  className="ring-2 ring-surface"
+                />
+              ))}
+            </div>
+            <span className="flex items-center gap-1 text-sm text-muted">
+              <PeopleIcon className="h-4 w-4" />
+              <span className="sr-only">Online now:</span>
+              {online.length}
+            </span>
+          </div>
         </div>
       </header>
 
-      <div
-        ref={listRef}
-        onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-2 py-4 sm:px-4"
-      >
+      <div ref={listRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
         {messages.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
-            <p className="font-medium">This is the start of #{room.name}</p>
-            <p className="text-sm text-muted">Say hello 👋</p>
+          <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
+            <Avatar id={room.id} name={room.name} shape="square" size="xl" />
+            <p className="font-semibold">This is the start of {room.name}</p>
+            <p className="text-sm text-muted">Send a message to get the conversation going.</p>
           </div>
         ) : (
-          <ol className="flex flex-col">
+          <ol className="mx-auto flex max-w-5xl flex-col px-3 py-5 sm:px-6">
             {messages.map((message, i) => {
               const prev = messages[i - 1];
+              // Day labels depend on the viewer's time zone, so they only
+              // appear once we're running in the browser.
+              const newDay =
+                hydrated && (!prev || dayKey(prev.created_at) !== dayKey(message.created_at));
               const grouped =
                 !!prev &&
+                !newDay &&
                 prev.user_id === message.user_id &&
                 time(message.created_at) - time(prev.created_at) < GROUP_WINDOW_MS;
               return (
-                <MessageRow
-                  key={message.id}
-                  message={message}
-                  grouped={grouped}
-                  mine={message.user_id === me.id}
-                  editText={editing?.id === message.id ? editing.text : null}
-                  onEditStart={() => setEditing({ id: message.id, text: message.content })}
-                  onEditChange={(text) => setEditing({ id: message.id, text })}
-                  onEditSave={saveEdit}
-                  onEditCancel={() => setEditing(null)}
-                  onDelete={() => deleteMessage(message)}
-                />
+                <Fragment key={message.id}>
+                  {newDay && <DayDivider iso={message.created_at} />}
+                  <MessageRow
+                    message={message}
+                    grouped={grouped}
+                    mine={message.user_id === me.id}
+                    editText={editing?.id === message.id ? editing.text : null}
+                    onEditStart={() => setEditing({ id: message.id, text: message.content })}
+                    onEditChange={(text) => setEditing({ id: message.id, text })}
+                    onEditSave={saveEdit}
+                    onEditCancel={() => setEditing(null)}
+                    onDelete={() => deleteMessage(message)}
+                  />
+                </Fragment>
               );
             })}
           </ol>
         )}
       </div>
 
-      <p className="h-5 truncate px-4 text-xs text-muted" aria-live="polite">
-        {typingLabel(typingNames)}
-      </p>
-
-      <form onSubmit={sendMessage} className="border-t border-border bg-surface p-3">
-        {error && (
-          <p role="alert" className="mb-2 flex items-center justify-between gap-2 rounded-lg bg-danger/10 px-3 py-1.5 text-xs text-danger">
-            <span>{error}</span>
-            <button type="button" onClick={() => setError(null)} aria-label="Dismiss error">
-              ✕
-            </button>
+      <form onSubmit={sendMessage} className="shrink-0 px-3 pb-3 sm:px-6 sm:pb-5">
+        <div className="mx-auto max-w-5xl">
+          <p className="flex h-6 items-center gap-2 truncate px-1 text-xs text-muted" aria-live="polite">
+            {typingNames.length > 0 && <TypingDots />}
+            {typingLabel(typingNames)}
           </p>
-        )}
-        <div className="flex items-end gap-2">
-          <textarea
-            value={draft}
-            onChange={(e) => handleDraftChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault();
-                void sendMessage();
-              }
-            }}
-            rows={1}
-            maxLength={MAX_LENGTH}
-            placeholder={`Message #${room.name}`}
-            aria-label="Message"
-            className="input field-sizing-content max-h-40 min-h-10 resize-none"
-          />
-          <button
-            type="submit"
-            disabled={!draft.trim()}
-            className="h-10 shrink-0 rounded-lg bg-accent px-4 text-sm font-medium text-accent-foreground transition hover:opacity-90 disabled:opacity-50"
-          >
-            Send
-          </button>
+          {error && (
+            <p
+              role="alert"
+              className="mb-2 flex items-center justify-between gap-2 rounded-md bg-danger/10 px-3 py-1.5 text-xs text-danger"
+            >
+              <span>{error}</span>
+              <button
+                type="button"
+                onClick={() => setError(null)}
+                aria-label="Dismiss error"
+                className="rounded p-0.5 hover:bg-danger/10"
+              >
+                <CloseIcon className="h-3.5 w-3.5" />
+              </button>
+            </p>
+          )}
+          <div className="flex items-end gap-1 rounded-md border border-border bg-surface py-1 pl-3 pr-1 shadow-sm transition focus-within:shadow-[inset_0_-2px_0_0_var(--accent-text)]">
+            <textarea
+              value={draft}
+              onChange={(e) => handleDraftChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  void sendMessage();
+                }
+              }}
+              rows={1}
+              maxLength={MAX_LENGTH}
+              placeholder="Type a message"
+              aria-label="Message"
+              className="field-sizing-content max-h-40 min-h-9 flex-1 resize-none bg-transparent py-2 text-sm outline-none placeholder:text-muted"
+            />
+            <button
+              type="submit"
+              disabled={!draft.trim()}
+              aria-label="Send"
+              title="Send (Enter) · Shift + Enter for a new line"
+              className="mb-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-accent-text transition hover:bg-hover disabled:text-muted disabled:hover:bg-transparent"
+            >
+              <SendIcon />
+            </button>
+          </div>
         </div>
-        <p className="mt-1.5 hidden text-[11px] text-muted sm:block">
-          Enter to send · Shift + Enter for a new line
-        </p>
       </form>
     </div>
+  );
+}
+
+const noopSubscribe = () => () => {};
+
+/** False during SSR and hydration, true afterwards — without an effect. */
+function useHydrated() {
+  return useSyncExternalStore(
+    noopSubscribe,
+    () => true,
+    () => false,
+  );
+}
+
+function dayKey(iso: string) {
+  return new Date(iso).toDateString();
+}
+
+function dayLabel(iso: string) {
+  const date = new Date(iso);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+
+  if (date.toDateString() === today.toDateString()) return "Today";
+  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return date.toLocaleDateString([], {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: date.getFullYear() === today.getFullYear() ? undefined : "numeric",
+  });
+}
+
+function DayDivider({ iso }: { iso: string }) {
+  return (
+    <li className="mb-1 mt-6 flex items-center gap-3 text-xs font-semibold text-muted first:mt-0">
+      <span className="h-px flex-1 bg-border" />
+      {dayLabel(iso)}
+      <span className="h-px flex-1 bg-border" />
+    </li>
+  );
+}
+
+function TypingDots() {
+  return (
+    <span aria-hidden className="flex gap-0.5">
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="h-1 w-1 animate-bounce rounded-full bg-muted"
+          style={{ animationDelay: `${i * 150}ms` }}
+        />
+      ))}
+    </span>
   );
 }
 
@@ -436,9 +532,9 @@ function Timestamp({ iso, className = "" }: { iso: string; className?: string })
       dateTime={iso}
       title={date.toLocaleString()}
       suppressHydrationWarning
-      className={`text-[11px] text-muted ${className}`}
+      className={`text-xs text-muted ${className}`}
     >
-      {date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+      {date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
     </time>
   );
 }
@@ -465,87 +561,97 @@ function MessageRow({
   onDelete: () => void;
 }) {
   const isEditing = editText !== null;
+  const spacing = grouped ? "mt-0.5" : "mt-4 first:mt-0";
+
+  const body = isEditing ? (
+    <div className="mt-1 space-y-1.5">
+      <textarea
+        autoFocus
+        value={editText}
+        onChange={(e) => onEditChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            onEditSave();
+          } else if (e.key === "Escape") {
+            onEditCancel();
+          }
+        }}
+        maxLength={MAX_LENGTH}
+        aria-label="Edit message"
+        className="input field-sizing-content max-h-40 resize-none"
+      />
+      <div className="flex justify-end gap-2">
+        <button type="button" onClick={onEditCancel} className="btn-secondary px-2.5 py-1 text-xs">
+          Cancel
+        </button>
+        <button type="button" onClick={onEditSave} className="btn-primary px-2.5 py-1 text-xs">
+          Save
+        </button>
+      </div>
+    </div>
+  ) : (
+    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+      {message.content}
+      {message.edited_at && <span className="ml-1.5 text-xs text-muted">Edited</span>}
+      {message.pending && <span className="ml-1.5 text-xs text-muted">Sending…</span>}
+    </p>
+  );
+
+  if (mine) {
+    return (
+      // tabIndex lets a tap on touch screens focus the row and reveal its actions.
+      <li
+        tabIndex={-1}
+        className={`group relative flex flex-col items-end pl-10 outline-none sm:pl-[20%] ${spacing} ${
+          message.pending ? "opacity-70" : ""
+        }`}
+      >
+        <div className={`max-w-full rounded-md bg-mine px-3.5 py-2 ${isEditing ? "w-full" : ""}`}>
+          {!grouped && <Timestamp iso={message.created_at} className="block" />}
+          {body}
+        </div>
+
+        {!message.pending && !isEditing && (
+          <div className="pointer-events-none absolute -top-4 right-1 z-10 flex gap-0.5 rounded-md border border-border bg-surface p-0.5 opacity-0 shadow-md transition group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
+            <button
+              type="button"
+              onClick={onEditStart}
+              aria-label="Edit message"
+              title="Edit"
+              className="icon-btn h-7 w-7"
+            >
+              <EditIcon className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={onDelete}
+              aria-label="Delete message"
+              title="Delete"
+              className="icon-btn h-7 w-7 hover:bg-danger/10 hover:text-danger"
+            >
+              <TrashIcon className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+      </li>
+    );
+  }
 
   return (
-    <li
-      className={`group relative flex gap-3 rounded-lg px-2 py-0.5 hover:bg-hover ${
-        grouped ? "" : "mt-3 first:mt-0"
-      } ${message.pending ? "opacity-60" : ""}`}
-    >
-      <div className="w-9 shrink-0">
-        {grouped ? (
-          <Timestamp
-            iso={message.created_at}
-            className="invisible block pt-1 text-center text-[10px] group-hover:visible"
-          />
-        ) : (
-          <Avatar id={message.user_id} name={message.username} />
-        )}
+    <li className={`flex gap-2 pr-10 sm:pr-[20%] ${spacing}`}>
+      <div className="w-8 shrink-0">
+        {!grouped && <Avatar id={message.user_id} name={message.username} />}
       </div>
-
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 rounded-md bg-surface px-3.5 py-2 shadow-sm">
         {!grouped && (
           <div className="flex items-baseline gap-2">
-            <span className="truncate text-sm font-semibold">
-              {message.username}
-              {mine && <span className="ml-1 font-normal text-muted">(you)</span>}
-            </span>
+            <span className="truncate text-xs font-semibold">{message.username}</span>
             <Timestamp iso={message.created_at} />
           </div>
         )}
-
-        {isEditing ? (
-          <div className="mt-1 space-y-1">
-            <textarea
-              autoFocus
-              value={editText}
-              onChange={(e) => onEditChange(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                  e.preventDefault();
-                  onEditSave();
-                } else if (e.key === "Escape") {
-                  onEditCancel();
-                }
-              }}
-              maxLength={MAX_LENGTH}
-              aria-label="Edit message"
-              className="input field-sizing-content max-h-40 resize-none"
-            />
-            <p className="text-[11px] text-muted">
-              Enter to save · Esc to{" "}
-              <button type="button" onClick={onEditCancel} className="text-accent hover:underline">
-                cancel
-              </button>
-            </p>
-          </div>
-        ) : (
-          <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
-            {message.content}
-            {message.edited_at && <span className="ml-1 text-[11px] text-muted">(edited)</span>}
-            {message.pending && <span className="ml-1 text-[11px] text-muted">sending…</span>}
-          </p>
-        )}
+        {body}
       </div>
-
-      {mine && !message.pending && !isEditing && (
-        <div className="absolute -top-3 right-2 flex gap-0.5 rounded-md border border-border bg-surface p-0.5 opacity-0 shadow-sm transition group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:static [@media(hover:none)]:self-start [@media(hover:none)]:opacity-100 [@media(hover:none)]:shadow-none">
-          <button
-            type="button"
-            onClick={onEditStart}
-            className="rounded px-2 py-0.5 text-xs text-muted hover:bg-hover hover:text-foreground"
-          >
-            Edit
-          </button>
-          <button
-            type="button"
-            onClick={onDelete}
-            className="rounded px-2 py-0.5 text-xs text-muted hover:bg-danger/10 hover:text-danger"
-          >
-            Delete
-          </button>
-        </div>
-      )}
     </li>
   );
 }

@@ -64,15 +64,18 @@ async function RoomLoader({ params }: { params: RoomParams }) {
 function RoomSkeleton() {
   return (
     <div className="flex flex-1 flex-col">
-      <div className="h-[61px] border-b border-border bg-surface" />
-      <div className="flex-1 space-y-4 p-4">
+      <div className="flex h-14 items-center gap-3 border-b border-border bg-surface px-5">
+        <div className="h-8 w-8 animate-pulse rounded-md bg-hover" />
+        <div className="h-3 w-32 animate-pulse rounded bg-hover" />
+      </div>
+      <div className="mx-auto w-full max-w-5xl flex-1 space-y-4 px-3 py-5 sm:px-6">
         {[60, 40, 75].map((w) => (
-          <div key={w} className="flex gap-3">
-            <div className="h-9 w-9 animate-pulse rounded-full bg-hover" />
-            <div className="flex-1 space-y-2">
-              <div className="h-3 w-24 animate-pulse rounded bg-hover" />
-              <div className="h-3 animate-pulse rounded bg-hover" style={{ width: `${w}%` }} />
-            </div>
+          <div key={w} className="flex gap-2">
+            <div className="h-8 w-8 animate-pulse rounded-full bg-border" />
+            <div
+              className="h-14 animate-pulse rounded-md bg-surface shadow-sm"
+              style={{ width: `${w}%` }}
+            />
           </div>
         ))}
       </div>

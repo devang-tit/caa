@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import { ChatIcon } from "@/components/icons";
 import { authenticate, type AuthState } from "./actions";
 
 export function LoginForm({ urlError }: { urlError?: React.ReactNode }) {
@@ -13,12 +14,12 @@ export function LoginForm({ urlError }: { urlError?: React.ReactNode }) {
   const isSignUp = mode === "signup";
 
   return (
-    <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-8 shadow-sm">
+    <div className="w-full max-w-sm rounded-lg border border-border bg-surface p-8 shadow-lg">
       <div className="mb-6 text-center">
-        <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-accent text-lg font-bold text-accent-foreground">
-          💬
+        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-accent text-accent-foreground">
+          <ChatIcon className="h-6 w-6 fill-current" />
         </div>
-        <h1 className="text-xl font-semibold">
+        <h1 className="text-xl font-bold">
           {isSignUp ? "Create your account" : "Welcome back"}
         </h1>
         <p className="mt-1 text-sm text-muted">
@@ -70,12 +71,12 @@ export function LoginForm({ urlError }: { urlError?: React.ReactNode }) {
 
         {!state.error && !state.message && urlError}
         {state.error && (
-          <p role="alert" className="rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">
+          <p role="alert" className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger">
             {state.error}
           </p>
         )}
         {state.message && (
-          <p role="status" className="rounded-lg bg-success/10 px-3 py-2 text-sm text-success">
+          <p role="status" className="rounded-md bg-success/10 px-3 py-2 text-sm text-success">
             {state.message}
           </p>
         )}
@@ -83,7 +84,7 @@ export function LoginForm({ urlError }: { urlError?: React.ReactNode }) {
         <button
           type="submit"
           disabled={pending}
-          className="w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-accent-foreground transition hover:opacity-90 disabled:opacity-60"
+          className="btn-primary w-full py-2"
         >
           {pending ? "Please wait…" : isSignUp ? "Sign up" : "Sign in"}
         </button>
@@ -94,7 +95,7 @@ export function LoginForm({ urlError }: { urlError?: React.ReactNode }) {
         <button
           type="button"
           onClick={() => setMode(isSignUp ? "signin" : "signup")}
-          className="font-medium text-accent hover:underline"
+          className="font-semibold text-accent-text hover:underline"
         >
           {isSignUp ? "Sign in" : "Create an account"}
         </button>
@@ -114,7 +115,7 @@ function Field({
 }) {
   return (
     <div className="space-y-1.5">
-      <label htmlFor={htmlFor} className="block text-sm font-medium">
+      <label htmlFor={htmlFor} className="block text-sm font-semibold">
         {label}
       </label>
       {children}

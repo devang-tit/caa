@@ -4,25 +4,23 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { Avatar } from "@/components/avatar";
+import { ComposeIcon } from "@/components/icons";
 import { createClient } from "@/lib/supabase/client";
 import { subscribeToChannel } from "@/lib/supabase/realtime";
-import type { CurrentUser, Room } from "@/lib/types";
+import type { Room } from "@/lib/types";
+import { useRoomSearch } from "./room-search";
 
 function upsertRoom(rooms: Room[], room: Room) {
   if (rooms.some((r) => r.id === room.id)) return rooms;
   return [...rooms, room].sort((a, b) => a.created_at.localeCompare(b.created_at));
 }
 
-export function RoomsSidebar({
-  initialRooms,
-  me,
-}: {
-  initialRooms: Room[];
-  me: CurrentUser;
-}) {
+export function RoomsSidebar({ initialRooms }: { initialRooms: Room[] }) {
   const router = useRouter();
   const { roomId } = useParams<{ roomId?: string }>();
+  const { query } = useRoomSearch();
   const [rooms, setRooms] = useState(initialRooms);
+  const [composerOpen, setComposerOpen] = useState(false);
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,6 +35,12 @@ export function RoomsSidebar({
       );
     });
   }, []);
+
+  function closeComposer() {
+    setComposerOpen(false);
+    setName("");
+    setError(null);
+  }
 
   async function createRoom(e: FormEvent) {
     e.preventDefault();
@@ -56,48 +60,93 @@ export function RoomsSidebar({
       setError(error.code === "23505" ? "A room with that name already exists." : error.message);
       return;
     }
-    setName("");
+    closeComposer();
     setRooms((prev) => upsertRoom(prev, data));
     router.push(`/chat/${data.id}`);
   }
 
-  async function signOut() {
-    await createClient().auth.signOut();
-    router.replace("/login");
-    router.refresh();
-  }
+  const showComposer = composerOpen || rooms.length === 0;
+  const needle = query.trim().toLowerCase();
+  const visibleRooms = needle
+    ? rooms.filter((room) => room.name.toLowerCase().includes(needle))
+    : rooms;
 
   return (
     <aside
-      className={`${roomId ? "hidden md:flex" : "flex"} w-full flex-col border-r border-border bg-surface md:w-72 md:shrink-0`}
+      className={`${roomId ? "hidden md:flex" : "flex"} w-full flex-col border-r border-border bg-pane md:w-80 md:shrink-0`}
     >
-      <div className="flex items-center gap-2 border-b border-border px-4 py-4">
-        <span className="text-lg">💬</span>
-        <h1 className="font-semibold">Realtime Chat</h1>
+      <div className="flex h-14 shrink-0 items-center justify-between px-4">
+        <h1 className="text-lg font-bold">Chat</h1>
+        <button
+          type="button"
+          onClick={() => (composerOpen ? closeComposer() : setComposerOpen(true))}
+          aria-expanded={showComposer}
+          aria-controls="new-room"
+          aria-label="New room"
+          title="New room"
+          className="icon-btn"
+        >
+          <ComposeIcon />
+        </button>
       </div>
 
-      <nav className="flex-1 overflow-y-auto p-2" aria-label="Rooms">
-        <p className="px-2 pb-1 pt-2 text-xs font-medium uppercase tracking-wide text-muted">
-          Rooms
-        </p>
-        {rooms.length === 0 && (
-          <p className="px-2 py-3 text-sm text-muted">No rooms yet. Create the first one below.</p>
+      {showComposer && (
+        <form
+          id="new-room"
+          onSubmit={createRoom}
+          onKeyDown={(e) => {
+            if (e.key === "Escape" && rooms.length > 0) closeComposer();
+          }}
+          className="mx-3 mb-2 space-y-2 rounded-lg border border-border bg-surface p-3 shadow-sm"
+        >
+          <label htmlFor="new-room-name" className="block text-xs font-semibold">
+            New room
+          </label>
+          <input
+            id="new-room-name"
+            autoFocus={composerOpen}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={50}
+            placeholder="Give your room a name"
+            className="input"
+          />
+          {error && <p className="text-xs text-danger">{error}</p>}
+          <div className="flex justify-end gap-2">
+            {rooms.length > 0 && (
+              <button type="button" onClick={closeComposer} className="btn-secondary">
+                Cancel
+              </button>
+            )}
+            <button type="submit" disabled={creating || !name.trim()} className="btn-primary">
+              {creating ? "Creating…" : "Create"}
+            </button>
+          </div>
+        </form>
+      )}
+
+      <nav className="flex-1 overflow-y-auto px-2 pb-3" aria-label="Rooms">
+        <p className="px-2 pb-1 pt-2 text-xs font-semibold text-muted">Rooms</p>
+        {rooms.length === 0 ? (
+          <p className="px-2 py-3 text-sm text-muted">No rooms yet. Create the first one above.</p>
+        ) : (
+          visibleRooms.length === 0 && (
+            <p className="px-2 py-3 text-sm text-muted">No rooms match “{query.trim()}”.</p>
+          )
         )}
         <ul className="space-y-0.5">
-          {rooms.map((room) => {
+          {visibleRooms.map((room) => {
             const active = room.id === roomId;
             return (
               <li key={room.id}>
                 <Link
                   href={`/chat/${room.id}`}
                   aria-current={active ? "page" : undefined}
-                  className={`flex items-center gap-2 truncate rounded-lg px-3 py-2 text-sm transition ${
-                    active
-                      ? "bg-accent/10 font-medium text-accent"
-                      : "text-foreground hover:bg-hover"
+                  className={`flex items-center gap-3 rounded-md px-2 py-2 text-sm transition ${
+                    active ? "bg-surface font-semibold shadow-sm" : "hover:bg-pane-hover"
                   }`}
                 >
-                  <span className="text-muted">#</span>
+                  <Avatar id={room.id} name={room.name} shape="square" />
                   <span className="truncate">{room.name}</span>
                 </Link>
               </li>
@@ -105,41 +154,6 @@ export function RoomsSidebar({
           })}
         </ul>
       </nav>
-
-      <form onSubmit={createRoom} className="space-y-2 border-t border-border p-3">
-        <div className="flex gap-2">
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            maxLength={50}
-            placeholder="New room name"
-            aria-label="New room name"
-            className="input py-1.5"
-          />
-          <button
-            type="submit"
-            disabled={creating || !name.trim()}
-            className="shrink-0 rounded-lg bg-accent px-3 text-sm font-medium text-accent-foreground transition hover:opacity-90 disabled:opacity-50"
-          >
-            Add
-          </button>
-        </div>
-        {error && <p className="text-xs text-danger">{error}</p>}
-      </form>
-
-      <div className="flex items-center gap-3 border-t border-border px-4 py-3">
-        <Avatar id={me.id} name={me.username} />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium">{me.username}</p>
-          <p className="text-xs text-muted">Signed in</p>
-        </div>
-        <button
-          onClick={signOut}
-          className="rounded-md px-2 py-1 text-xs text-muted transition hover:bg-hover hover:text-foreground"
-        >
-          Sign out
-        </button>
-      </div>
     </aside>
   );
 }
