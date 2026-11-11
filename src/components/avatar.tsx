@@ -1,3 +1,6 @@
+import type { Presence } from "@/lib/types";
+import { STATUS_LABELS } from "@/lib/types";
+
 // Soft tinted backgrounds with dark initials, like Teams' default avatars.
 const PALETTE = [
   "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-200",
@@ -13,6 +16,7 @@ const PALETTE = [
 ];
 
 const SIZES = {
+  xs: "h-5 w-5 text-[9px]",
   sm: "h-6 w-6 text-[10px]",
   md: "h-8 w-8 text-xs",
   lg: "h-10 w-10 text-sm",
@@ -20,10 +24,19 @@ const SIZES = {
 };
 
 const DOT_SIZES = {
+  xs: "h-2 w-2",
   sm: "h-2 w-2",
   md: "h-2.5 w-2.5",
   lg: "h-3 w-3",
   xl: "h-4 w-4",
+};
+
+const DOT_COLORS: Record<Presence, string> = {
+  available: "bg-success",
+  busy: "bg-danger",
+  dnd: "bg-danger",
+  away: "bg-amber-400",
+  offline: "bg-[color:var(--avatar-ring,var(--surface))] shadow-[inset_0_0_0_1.5px_var(--muted)]",
 };
 
 function colorFor(id: string) {
@@ -41,12 +54,24 @@ function initials(name: string, square: boolean) {
   return first[0] + Array.from(words[1])[0];
 }
 
+/** Small status dot (Teams-style). The ring blends with `--avatar-ring`. */
+export function StatusDot({ status, className = "" }: { status: Presence; className?: string }) {
+  return (
+    <span
+      title={STATUS_LABELS[status]}
+      className={`inline-flex items-center justify-center rounded-full ring-2 ring-[color:var(--avatar-ring,var(--surface))] ${DOT_COLORS[status]} ${className}`}
+    >
+      {status === "dnd" && <span className="h-[1.5px] w-1/2 rounded-full bg-white" />}
+    </span>
+  );
+}
+
 export function Avatar({
   id,
   name,
   size = "md",
   shape = "circle",
-  presence = false,
+  status,
   className = "",
 }: {
   id: string;
@@ -54,8 +79,8 @@ export function Avatar({
   size?: keyof typeof SIZES;
   /** Circles for people, rounded squares for rooms. */
   shape?: "circle" | "square";
-  /** Shows a green "online" dot. Its ring uses `--avatar-ring` (default: surface). */
-  presence?: boolean;
+  /** Shows a status dot; its ring uses `--avatar-ring` (default: surface). */
+  status?: Presence;
   className?: string;
 }) {
   return (
@@ -65,10 +90,8 @@ export function Avatar({
       className={`relative inline-flex shrink-0 select-none items-center justify-center font-semibold uppercase ${SIZES[size]} ${shape === "square" ? "rounded-md" : "rounded-full"} ${colorFor(id)} ${className}`}
     >
       {initials(name, shape === "square")}
-      {presence && (
-        <span
-          className={`absolute -bottom-0.5 -right-0.5 rounded-full bg-success ring-2 ring-[color:var(--avatar-ring,var(--surface))] ${DOT_SIZES[size]}`}
-        />
+      {status && (
+        <StatusDot status={status} className={`absolute -bottom-0.5 -right-0.5 ${DOT_SIZES[size]}`} />
       )}
     </span>
   );

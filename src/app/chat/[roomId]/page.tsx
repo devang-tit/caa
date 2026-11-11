@@ -2,21 +2,30 @@ import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { Suspense } from "react";
 import { createClient, getCurrentUser } from "@/lib/supabase/server";
-import { MESSAGE_COLUMNS, type ChatMessage, type Message, type Room } from "@/lib/types";
+import {
+  MESSAGE_COLUMNS,
+  MESSAGE_WITH_REACTIONS,
+  ROOM_COLUMNS,
+  splitReactions,
+  type Message,
+  type MessagePreview,
+  type MessageWithReactions,
+  type Room,
+  type RoomMember,
+} from "@/lib/types";
 import { ChatRoom } from "./chat-room";
 
 const PAGE_SIZE = 50;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-type MessageWithProfile = Message & { profiles: { username: string } | null };
-type RoomParams = PageProps<"/chat/[roomId]">["params"];
 
 async function getRoom(roomId: string) {
   if (!UUID_RE.test(roomId)) return null;
   const supabase = await createClient();
+  // RLS hides private chats you're not in, so they 404 like missing rooms.
   const { data } = await supabase
     .from("rooms")
-    .select("id, name, created_by, created_at")
+    .select(ROOM_COLUMNS)
     .eq("id", roomId)
     .maybeSingle<Room>();
   return data;
@@ -27,38 +36,133 @@ export async function generateMetadata(
 ): Promise<Metadata> {
   const { roomId } = await props.params;
   const room = await getRoom(roomId);
-  return { title: room ? `#${room.name} · Realtime Chat` : "Realtime Chat" };
+  if (!room) return { title: "Realtime Chat" };
+  return { title: room.kind === "channel" ? `#${room.name} · Realtime Chat` : "Chat · Realtime Chat" };
 }
 
 export default function RoomPage(props: PageProps<"/chat/[roomId]">) {
   return (
     <Suspense fallback={<RoomSkeleton />}>
-      <RoomLoader params={props.params} />
+      <RoomLoader params={props.params} searchParams={props.searchParams} />
     </Suspense>
   );
 }
 
-async function RoomLoader({ params }: { params: RoomParams }) {
-  const { roomId } = await params;
+async function RoomLoader({
+  params,
+  searchParams,
+}: {
+  params: PageProps<"/chat/[roomId]">["params"];
+  searchParams: PageProps<"/chat/[roomId]">["searchParams"];
+}) {
+  const [{ roomId }, query] = await Promise.all([params, searchParams]);
+  const focusId = typeof query.m === "string" && UUID_RE.test(query.m) ? query.m : null;
 
   const [me, room] = await Promise.all([getCurrentUser(), getRoom(roomId)]);
   if (!me) redirect("/login");
   if (!room) notFound();
 
   const supabase = await createClient();
-  const { data: rows } = await supabase
+
+  const latest = supabase
     .from("messages")
-    .select(`${MESSAGE_COLUMNS}, profiles(username)`)
+    .select(MESSAGE_WITH_REACTIONS)
     .eq("room_id", room.id)
     .order("created_at", { ascending: false })
     .limit(PAGE_SIZE)
-    .overrideTypes<MessageWithProfile[], { merge: false }>();
+    .overrideTypes<MessageWithReactions[], { merge: false }>();
 
-  const initialMessages: ChatMessage[] = (rows ?? [])
-    .reverse()
-    .map(({ profiles, ...m }) => ({ ...m, username: profiles?.username ?? "Unknown" }));
+  const [latestRes, membersRes, pinnedRes, savedRes] = await Promise.all([
+    latest,
+    room.kind === "channel"
+      ? Promise.resolve({ data: [] as RoomMember[] })
+      : supabase
+          .from("room_members")
+          .select("room_id, user_id, last_read_at")
+          .eq("room_id", room.id)
+          .overrideTypes<RoomMember[], { merge: false }>(),
+    supabase
+      .from("messages")
+      .select(MESSAGE_COLUMNS)
+      .eq("room_id", room.id)
+      .not("pinned_at", "is", null)
+      .order("pinned_at", { ascending: false })
+      .limit(20)
+      .overrideTypes<Message[], { merge: false }>(),
+    supabase
+      .from("saved_messages")
+      .select("message_id, messages!inner(room_id)")
+      .eq("messages.room_id", room.id)
+      .overrideTypes<{ message_id: string }[], { merge: false }>(),
+  ]);
 
-  return <ChatRoom key={room.id} room={room} initialMessages={initialMessages} me={me} />;
+  let rows = (latestRes.data ?? []).slice().reverse();
+  let hasOlder = rows.length === PAGE_SIZE;
+
+  // Jumping to a message (search, Activity, Saved) that isn't in the latest
+  // page: load a window starting a little before it instead.
+  if (focusId && !rows.some((m) => m.id === focusId)) {
+    const { data: target } = await supabase
+      .from("messages")
+      .select("created_at")
+      .eq("id", focusId)
+      .eq("room_id", room.id)
+      .maybeSingle<{ created_at: string }>();
+    if (target) {
+      const [olderRes, newerRes] = await Promise.all([
+        supabase
+          .from("messages")
+          .select(MESSAGE_WITH_REACTIONS)
+          .eq("room_id", room.id)
+          .lt("created_at", target.created_at)
+          .order("created_at", { ascending: false })
+          .limit(15)
+          .overrideTypes<MessageWithReactions[], { merge: false }>(),
+        supabase
+          .from("messages")
+          .select(MESSAGE_WITH_REACTIONS)
+          .eq("room_id", room.id)
+          .gte("created_at", target.created_at)
+          .order("created_at", { ascending: true })
+          .limit(300)
+          .overrideTypes<MessageWithReactions[], { merge: false }>(),
+      ]);
+      const older = (olderRes.data ?? []).slice().reverse();
+      rows = [...older, ...(newerRes.data ?? [])];
+      hasOlder = older.length === 15;
+    }
+  }
+
+  const { messages, reactions } = splitReactions(rows);
+
+  // Quotes for replies whose original isn't in the loaded window.
+  const loaded = new Set(messages.map((m) => m.id));
+  const missingParents = [
+    ...new Set(messages.map((m) => m.reply_to).filter((id): id is string => !!id && !loaded.has(id))),
+  ];
+  const { data: parents } = missingParents.length
+    ? await supabase
+        .from("messages")
+        .select("id, user_id, content, attachments")
+        .in("id", missingParents)
+        .overrideTypes<MessagePreview[], { merge: false }>()
+    : { data: [] as MessagePreview[] };
+
+  return (
+    <ChatRoom
+      key={`${room.id}:${focusId ?? ""}`}
+      room={room}
+      me={me}
+      initialMessages={messages}
+      initialReactions={reactions}
+      initialParents={parents ?? []}
+      initialMembers={membersRes.data ?? []}
+      initialPinned={pinnedRes.data ?? []}
+      initialSavedIds={(savedRes.data ?? []).map((s) => s.message_id)}
+      initialHasOlder={hasOlder}
+      focusId={focusId}
+    />
+  );
 }
 
 function RoomSkeleton() {

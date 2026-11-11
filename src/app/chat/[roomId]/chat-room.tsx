@@ -1,47 +1,54 @@
 "use client";
 
-import {
-  REALTIME_SUBSCRIBE_STATES,
-  type RealtimeChannel,
-} from "@supabase/supabase-js";
-import Link from "next/link";
+import { REALTIME_SUBSCRIBE_STATES, type RealtimeChannel } from "@supabase/supabase-js";
+import { useRouter } from "next/navigation";
 import {
   Fragment,
+  useCallback,
   useEffect,
+  useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
-  type FormEvent,
 } from "react";
 import { Avatar } from "@/components/avatar";
-import {
-  ChevronLeftIcon,
-  CloseIcon,
-  EditIcon,
-  PeopleIcon,
-  SendIcon,
-  TrashIcon,
-} from "@/components/icons";
+import { PeopleIcon } from "@/components/icons";
+import { usePeople } from "@/components/session-provider";
 import { createClient } from "@/lib/supabase/client";
 import { subscribeToChannel } from "@/lib/supabase/realtime";
 import {
+  conversationTitle,
   MESSAGE_COLUMNS,
+  MESSAGE_WITH_REACTIONS,
+  splitReactions,
   type ChatMessage,
   type CurrentUser,
+  type Member,
   type Message,
+  type MessagePreview,
+  type MessageWithReactions,
+  type Reaction,
   type Room,
+  type RoomMember,
 } from "@/lib/types";
+import { Composer, type OutgoingMessage } from "./composer";
+import { MessageItem, type Receipt } from "./message-item";
+import { MessageMenu, type MenuState } from "./message-menu";
+import { RoomHeader, type ConnectionStatus } from "./room-header";
 
 type PresenceMeta = { username: string };
 type TypingPayload = { userId: string; username: string };
-type ConnectionStatus = "connecting" | "live" | "offline";
 
-const MAX_LENGTH = 2000;
+const PAGE_SIZE = 50;
 const TYPING_TIMEOUT_MS = 3000;
 const TYPING_THROTTLE_MS = 1500;
 const GROUP_WINDOW_MS = 5 * 60 * 1000;
+const MARK_READ_INTERVAL_MS = 3000;
+const HIGHLIGHT_MS = 2500;
 
 const time = (iso: string) => Date.parse(iso);
+const reactionKey = (r: Reaction) => `${r.message_id}|${r.user_id}|${r.emoji}`;
 
 /** Insert or replace a message by id, keeping the list in chronological order. */
 function upsertMessage(list: ChatMessage[], msg: ChatMessage): ChatMessage[] {
@@ -59,34 +66,135 @@ function upsertMessage(list: ChatMessage[], msg: ChatMessage): ChatMessage[] {
   return next;
 }
 
+/** Keep the pinned list in sync with a message's pinned_at. */
+function syncPinned(list: Message[], msg: Message): Message[] {
+  const without = list.filter((m) => m.id !== msg.id);
+  if (!msg.pinned_at) return without.length === list.length ? list : without;
+  return [msg, ...without].sort((a, b) => time(b.pinned_at!) - time(a.pinned_at!));
+}
+
 export function ChatRoom({
   room,
-  initialMessages,
   me,
+  initialMessages,
+  initialReactions,
+  initialParents,
+  initialMembers,
+  initialPinned,
+  initialSavedIds,
+  initialHasOlder,
+  focusId,
 }: {
   room: Room;
-  initialMessages: ChatMessage[];
   me: CurrentUser;
+  initialMessages: Message[];
+  initialReactions: Reaction[];
+  initialParents: MessagePreview[];
+  initialMembers: RoomMember[];
+  initialPinned: Message[];
+  initialSavedIds: string[];
+  initialHasOlder: boolean;
+  focusId: string | null;
 }) {
-  const [messages, setMessages] = useState(initialMessages);
-  const [online, setOnline] = useState<CurrentUser[]>([]);
+  const router = useRouter();
+  const people = usePeople();
+  const hydrated = useHydrated();
+
+  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+  const [reactions, setReactions] = useState(initialReactions);
+  const [parents, setParents] = useState<Record<string, MessagePreview>>(() =>
+    Object.fromEntries(initialParents.map((p) => [p.id, p])),
+  );
+  const [members, setMembers] = useState(initialMembers);
+  const [pinned, setPinned] = useState(initialPinned);
+  const [savedIds, setSavedIds] = useState<ReadonlySet<string>>(() => new Set(initialSavedIds));
+  const [hasOlder, setHasOlder] = useState(initialHasOlder);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [here, setHere] = useState<Member[]>([]);
   const [typing, setTyping] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
-  const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
+  const [replyTo, setReplyTo] = useState<MessagePreview | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const hydrated = useHydrated();
+  const [highlightId, setHighlightId] = useState<string | null>(focusId);
+  const [menu, setMenu] = useState<MenuState | null>(null);
 
   const channelRef = useRef<RealtimeChannel | null>(null);
   const lastTypingSentRef = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
-  const stickToBottomRef = useRef(true);
+  const contentRef = useRef<HTMLOListElement>(null);
+  const stickToBottomRef = useRef(!focusId);
+  const prependHeightRef = useRef<number | null>(null);
+  const requestMarkReadRef = useRef<() => void>(() => {});
+  const messagesRef = useRef(messages);
+  const editingRef = useRef(editing);
 
-  // ── Realtime: DB changes + presence + typing, all on one channel ──────────
+  useEffect(() => {
+    messagesRef.current = messages;
+    editingRef.current = editing;
+  });
+
+  const nameOf = useCallback(
+    (userId: string) => people.get(userId)?.username ?? "Unknown",
+    [people],
+  );
+
+  const memberList: Member[] = useMemo(
+    () => members.map((m) => ({ id: m.user_id, username: nameOf(m.user_id) })),
+    [members, nameOf],
+  );
+  const title = conversationTitle(room, memberList, me.id);
+
+  /** Fetch quotes for replies whose original isn't loaded. */
+  const loadParents = useCallback(async (ids: string[]) => {
+    const missing = ids.filter((id) => !messagesRef.current.some((m) => m.id === id));
+    if (missing.length === 0) return;
+    const { data } = await createClient()
+      .from("messages")
+      .select("id, user_id, content, attachments")
+      .in("id", missing)
+      .overrideTypes<MessagePreview[], { merge: false }>();
+    if (data?.length) {
+      setParents((prev) => ({ ...prev, ...Object.fromEntries(data.map((p) => [p.id, p])) }));
+    }
+  }, []);
+
+  // ── Read state: tell the server we've seen this conversation ───────────────
   useEffect(() => {
     const supabase = createClient();
-    const names = new Map<string, string>([[me.id, me.username]]);
+    let last = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let pending = false;
+
+    const run = () => {
+      pending = false;
+      last = Date.now();
+      // Query builders are lazy: .then() is what actually sends the request.
+      void supabase.rpc("mark_room_read", { target: room.id }).then(() => {});
+    };
+    const request = () => {
+      if (document.visibilityState !== "visible") return;
+      pending = true;
+      clearTimeout(timer);
+      timer = setTimeout(run, Math.max(0, last + MARK_READ_INTERVAL_MS - Date.now()));
+    };
+
+    requestMarkReadRef.current = request;
+    request();
+    document.addEventListener("visibilitychange", request);
+    return () => {
+      clearTimeout(timer);
+      if (pending) run();
+      document.removeEventListener("visibilitychange", request);
+      requestMarkReadRef.current = () => {};
+    };
+  }, [room.id]);
+
+  // ── Realtime: messages, reactions, read state, presence, typing ────────────
+  useEffect(() => {
+    const supabase = createClient();
     const typingTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    const roomFilter = `room_id=eq.${room.id}`;
 
     const stopTyping = (userId: string) => {
       clearTimeout(typingTimers.get(userId));
@@ -99,21 +207,6 @@ export function ChatRoom({
       });
     };
 
-    const resolveUsername = async (userId: string) => {
-      const known = names.get(userId);
-      if (known) return known;
-      const { data } = await supabase
-        .from("profiles")
-        .select("username")
-        .eq("id", userId)
-        .maybeSingle<{ username: string }>();
-      const username = data?.username ?? "Unknown";
-      names.set(userId, username);
-      return username;
-    };
-
-    const roomFilter = `room_id=eq.${room.id}`;
-
     const unsubscribe = subscribeToChannel(
       supabase,
       `room:${room.id}`,
@@ -124,11 +217,12 @@ export function ChatRoom({
           .on(
             "postgres_changes",
             { event: "INSERT", schema: "public", table: "messages", filter: roomFilter },
-            async ({ new: row }) => {
+            ({ new: row }) => {
               const msg = row as Message;
-              const username = await resolveUsername(msg.user_id);
               stopTyping(msg.user_id);
-              setMessages((prev) => upsertMessage(prev, { ...msg, username }));
+              setMessages((prev) => upsertMessage(prev, msg));
+              if (msg.user_id !== me.id) requestMarkReadRef.current();
+              if (msg.reply_to) void loadParents([msg.reply_to]);
             },
           )
           .on(
@@ -137,28 +231,69 @@ export function ChatRoom({
             ({ new: row }) => {
               const msg = row as Message;
               setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, ...msg } : m)));
+              setPinned((prev) => syncPinned(prev, msg));
+              setParents((prev) =>
+                prev[msg.id] ? { ...prev, [msg.id]: { ...prev[msg.id], content: msg.content } } : prev,
+              );
             },
           )
-          // Postgres DELETE events can't be filtered and only carry the primary
-          // key, so listen table-wide and drop the id if we happen to have it.
+          // DELETE events can't be filtered and only carry the primary key,
+          // so listen table-wide and drop whatever we happen to have.
+          .on("postgres_changes", { event: "DELETE", schema: "public", table: "messages" }, ({ old }) => {
+            const id = (old as Partial<Message>).id;
+            if (!id) return;
+            setMessages((prev) => prev.filter((m) => m.id !== id));
+            setPinned((prev) => prev.filter((m) => m.id !== id));
+          })
           .on(
             "postgres_changes",
-            { event: "DELETE", schema: "public", table: "messages" },
-            ({ old }) => {
-              const id = (old as Partial<Message>).id;
-              if (id) setMessages((prev) => prev.filter((m) => m.id !== id));
+            { event: "INSERT", schema: "public", table: "message_reactions", filter: roomFilter },
+            ({ new: row }) => {
+              const r = row as Reaction;
+              const reaction = { message_id: r.message_id, user_id: r.user_id, emoji: r.emoji };
+              setReactions((prev) =>
+                prev.some((x) => reactionKey(x) === reactionKey(reaction)) ? prev : [...prev, reaction],
+              );
             },
           )
+          .on(
+            "postgres_changes",
+            { event: "DELETE", schema: "public", table: "message_reactions" },
+            ({ old }) => {
+              const r = old as Partial<Reaction>;
+              if (!r.message_id || !r.user_id || !r.emoji) return;
+              const key = reactionKey(r as Reaction);
+              setReactions((prev) => {
+                const next = prev.filter((x) => reactionKey(x) !== key);
+                return next.length === prev.length ? prev : next;
+              });
+            },
+          );
+
+        if (room.kind !== "channel") {
+          channel.on(
+            "postgres_changes",
+            { event: "*", schema: "public", table: "room_members", filter: roomFilter },
+            ({ new: row }) => {
+              const member = row as RoomMember;
+              if (!member?.user_id) return;
+              setMembers((prev) =>
+                prev.some((m) => m.user_id === member.user_id)
+                  ? prev.map((m) => (m.user_id === member.user_id ? { ...m, ...member } : m))
+                  : [...prev, member],
+              );
+            },
+          );
+        }
+
+        channel
           .on("presence", { event: "sync" }, () => {
             const state = channel.presenceState<PresenceMeta>();
-            const users = Object.entries(state)
-              .map(([id, metas]) => {
-                const username = metas[0]?.username ?? "Unknown";
-                names.set(id, username);
-                return { id, username };
-              })
-              .sort((a, b) => a.username.localeCompare(b.username));
-            setOnline(users);
+            setHere(
+              Object.entries(state)
+                .map(([id, metas]) => ({ id, username: metas[0]?.username ?? "Unknown" }))
+                .sort((a, b) => a.username.localeCompare(b.username)),
+            );
           })
           .on("presence", { event: "leave" }, ({ key }) => stopTyping(key))
           .on("broadcast", { event: "typing" }, ({ payload }) => {
@@ -191,24 +326,53 @@ export function ChatRoom({
       channelRef.current = null;
       typingTimers.forEach(clearTimeout);
     };
-  }, [room.id, me.id, me.username]);
+  }, [room.id, room.kind, me.id, me.username, loadParents]);
 
-  // ── Keep the view pinned to the newest message unless the user scrolled up ─
-  useEffect(() => {
+  // ── Scrolling ──────────────────────────────────────────────────────────────
+  useLayoutEffect(() => {
     const el = listRef.current;
-    if (el && stickToBottomRef.current) el.scrollTop = el.scrollHeight;
-  }, [messages]);
+    if (!el) return;
+    if (prependHeightRef.current !== null) {
+      // Older messages were added above: keep the same messages in view.
+      el.scrollTop += el.scrollHeight - prependHeightRef.current;
+      prependHeightRef.current = null;
+    } else if (stickToBottomRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [messages, reactions]);
+
+  // Images and day dividers change the height after render; stay pinned.
+  const hasMessages = messages.length > 0;
+  useEffect(() => {
+    const list = listRef.current;
+    const content = contentRef.current;
+    if (!list || !content) return;
+    const observer = new ResizeObserver(() => {
+      if (stickToBottomRef.current) list.scrollTop = list.scrollHeight;
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [hasMessages]);
+
+  useEffect(() => {
+    if (focusId) document.getElementById(`msg-${focusId}`)?.scrollIntoView({ block: "center" });
+  }, [focusId]);
+
+  useEffect(() => {
+    if (!highlightId) return;
+    const timer = setTimeout(() => setHighlightId(null), HIGHLIGHT_MS);
+    return () => clearTimeout(timer);
+  }, [highlightId]);
 
   function handleScroll() {
     const el = listRef.current;
     if (!el) return;
     stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    if (menu) setMenu(null);
   }
 
-  // ── Actions ───────────────────────────────────────────────────────────────
-  function handleDraftChange(value: string) {
-    setDraft(value);
-
+  // ── Actions ────────────────────────────────────────────────────────────────
+  function handleTyping(value: string) {
     const channel = channelRef.current;
     const now = Date.now();
     if (!channel || status !== "live" || !value.trim()) return;
@@ -221,21 +385,13 @@ export function ChatRoom({
     });
   }
 
-  async function sendMessage(e?: FormEvent) {
-    e?.preventDefault();
-    const content = draft.trim();
-    if (!content) return;
-    if (content.length > MAX_LENGTH) {
-      setError(`Messages can be at most ${MAX_LENGTH} characters.`);
-      return;
-    }
-
+  async function sendMessage({ content, mentions, attachments, replyTo: parent }: OutgoingMessage) {
     // Optimistic: show it immediately, swap in the real row when it's saved.
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     stickToBottomRef.current = true;
     lastTypingSentRef.current = 0;
-    setDraft("");
     setError(null);
+    setReplyTo(null);
     setMessages((prev) => [
       ...prev,
       {
@@ -245,38 +401,40 @@ export function ChatRoom({
         content,
         created_at: new Date().toISOString(),
         edited_at: null,
-        username: me.username,
+        reply_to: parent?.id ?? null,
+        mentions,
+        attachments,
+        pinned_at: null,
+        pinned_by: null,
         pending: true,
       },
     ]);
 
     const { data, error } = await createClient()
       .from("messages")
-      .insert({ room_id: room.id, content })
+      .insert({ room_id: room.id, content, mentions, attachments, reply_to: parent?.id ?? null })
       .select(MESSAGE_COLUMNS)
       .single<Message>();
 
     if (error) {
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
-      setDraft((current) => current || content);
+      setReplyTo(parent);
       setError(`Couldn't send: ${error.message}`);
-      return;
+      return false;
     }
     // The realtime INSERT may already have added it — upsert dedupes by id.
-    setMessages((prev) =>
-      upsertMessage(
-        prev.filter((m) => m.id !== tempId),
-        { ...data, username: me.username },
-      ),
-    );
+    setMessages((prev) => upsertMessage(prev.filter((m) => m.id !== tempId), data));
+    return true;
   }
 
-  async function saveEdit() {
-    if (!editing) return;
-    const original = messages.find((m) => m.id === editing.id);
-    const content = editing.text.trim();
+  const saveEdit = useCallback(async () => {
+    const current = editingRef.current;
+    if (!current) return;
+    const original = messagesRef.current.find((m) => m.id === current.id);
+    const content = current.text.trim();
     setEditing(null);
-    if (!original || !content || content === original.content) return;
+    if (!original || content === original.content) return;
+    if (!content && original.attachments.length === 0) return;
 
     setMessages((prev) => prev.map((m) => (m.id === original.id ? { ...m, content } : m)));
     const { data, error } = await createClient()
@@ -293,89 +451,234 @@ export function ChatRoom({
       setError(`Couldn't edit: ${error.message}`);
       return;
     }
-    setMessages((prev) => upsertMessage(prev, { ...data, username: original.username }));
-  }
+    setMessages((prev) => upsertMessage(prev, data));
+  }, []);
 
   async function deleteMessage(message: ChatMessage) {
     if (!window.confirm("Delete this message for everyone?")) return;
     setMessages((prev) => prev.filter((m) => m.id !== message.id));
-    const { error } = await createClient().from("messages").delete().eq("id", message.id);
+    setPinned((prev) => prev.filter((m) => m.id !== message.id));
+    const supabase = createClient();
+    const { error } = await supabase.from("messages").delete().eq("id", message.id);
     if (error) {
       setMessages((prev) => upsertMessage(prev, message));
+      setPinned((prev) => syncPinned(prev, message));
       setError(`Couldn't delete: ${error.message}`);
+      return;
+    }
+    if (message.attachments.length) {
+      void supabase.storage.from("attachments").remove(message.attachments.map((a) => a.path));
     }
   }
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  const reactionsRef = useRef(reactions);
+  useEffect(() => {
+    reactionsRef.current = reactions;
+  }, [reactions]);
+
+  const toggleReaction = useCallback(
+    async (message: ChatMessage, emoji: string) => {
+      const reaction: Reaction = { message_id: message.id, user_id: me.id, emoji };
+      const key = reactionKey(reaction);
+      const had = reactionsRef.current.some((r) => reactionKey(r) === key);
+      const add = (prev: Reaction[]) =>
+        prev.some((r) => reactionKey(r) === key) ? prev : [...prev, reaction];
+      const remove = (prev: Reaction[]) => prev.filter((r) => reactionKey(r) !== key);
+
+      setReactions(had ? remove : add);
+      const supabase = createClient();
+      const { error } = had
+        ? await supabase.from("message_reactions").delete().match(reaction)
+        : await supabase.from("message_reactions").insert({ message_id: message.id, emoji });
+
+      if (error && error.code !== "23505") {
+        setReactions(had ? add : remove);
+        setError(`Couldn't update the reaction: ${error.message}`);
+      }
+    },
+    [me.id],
+  );
+
+  async function togglePin(message: Message) {
+    const { data, error } = await createClient().rpc("toggle_pin", { target: message.id });
+    if (error) {
+      setError(`Couldn't update the pin: ${error.message}`);
+      return;
+    }
+    const pinnedAt = (data as string | null) ?? null;
+    const updated = { ...message, pinned_at: pinnedAt, pinned_by: pinnedAt ? me.id : null };
+    setMessages((prev) => prev.map((m) => (m.id === message.id ? { ...m, ...updated } : m)));
+    setPinned((prev) => syncPinned(prev, updated));
+  }
+
+  async function toggleSave(message: Message) {
+    const saved = savedIds.has(message.id);
+    const update = (add: boolean) =>
+      setSavedIds((prev) => {
+        const next = new Set(prev);
+        if (add) next.add(message.id);
+        else next.delete(message.id);
+        return next;
+      });
+    update(!saved);
+    const supabase = createClient();
+    const { error } = saved
+      ? await supabase.from("saved_messages").delete().eq("message_id", message.id)
+      : await supabase.from("saved_messages").insert({ message_id: message.id });
+    if (error && error.code !== "23505") {
+      update(saved);
+      setError(`Couldn't update saved messages: ${error.message}`);
+    }
+  }
+
+  async function loadOlder() {
+    const oldest = messages.find((m) => !m.pending);
+    if (!oldest || loadingOlder) return;
+    setLoadingOlder(true);
+    const { data, error } = await createClient()
+      .from("messages")
+      .select(MESSAGE_WITH_REACTIONS)
+      .eq("room_id", room.id)
+      .lt("created_at", oldest.created_at)
+      .order("created_at", { ascending: false })
+      .limit(PAGE_SIZE)
+      .overrideTypes<MessageWithReactions[], { merge: false }>();
+    setLoadingOlder(false);
+    if (error) {
+      setError(`Couldn't load earlier messages: ${error.message}`);
+      return;
+    }
+
+    const { messages: older, reactions: olderReactions } = splitReactions(data.slice().reverse());
+    prependHeightRef.current = listRef.current?.scrollHeight ?? null;
+    setMessages((prev) => [...older.filter((m) => !prev.some((p) => p.id === m.id)), ...prev]);
+    setReactions((prev) => {
+      const keys = new Set(prev.map(reactionKey));
+      return [...prev, ...olderReactions.filter((r) => !keys.has(reactionKey(r)))];
+    });
+    setHasOlder(data.length === PAGE_SIZE);
+    const replyIds = older.map((m) => m.reply_to).filter((id): id is string => !!id);
+    if (replyIds.length) void loadParents(replyIds);
+  }
+
+  const jumpTo = useCallback(
+    (id: string) => {
+      if (messagesRef.current.some((m) => m.id === id)) {
+        document.getElementById(`msg-${id}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+        setHighlightId(id);
+      } else {
+        router.push(`/chat/${room.id}?m=${id}`);
+      }
+    },
+    [room.id, router],
+  );
+
+  const startReply = useCallback((message: ChatMessage) => {
+    setReplyTo({
+      id: message.id,
+      user_id: message.user_id,
+      content: message.content,
+      attachments: message.attachments,
+    });
+  }, []);
+
+  const openMenu = useCallback((message: ChatMessage, anchor: DOMRect) => {
+    setMenu({ message, anchor });
+  }, []);
+  const closeMenu = useCallback(() => setMenu(null), []);
+  const changeEdit = useCallback(
+    (text: string) => setEditing((prev) => (prev ? { ...prev, text } : prev)),
+    [],
+  );
+  const cancelEdit = useCallback(() => setEditing(null), []);
+
+  // ── Derived view data ──────────────────────────────────────────────────────
+  const byId = useMemo(() => new Map(messages.map((m) => [m.id, m])), [messages]);
+  const reactionsByMessage = useMemo(() => {
+    const map = new Map<string, Reaction[]>();
+    for (const r of reactions) {
+      const list = map.get(r.message_id);
+      if (list) list.push(r);
+      else map.set(r.message_id, [r]);
+    }
+    return map;
+  }, [reactions]);
+
+  const receipt = useMemo((): { id: string; value: Receipt } | null => {
+    if (room.kind === "channel") return null;
+    const last = messages.findLast((m) => m.user_id === me.id && !m.pending);
+    if (!last) return null;
+    const others = members.filter((m) => m.user_id !== me.id);
+    const seen = others.filter((m) => time(m.last_read_at) >= time(last.created_at));
+    const names = seen.map((m) => nameOf(m.user_id)).join(", ");
+    let label = "Sent";
+    if (seen.length && room.kind === "direct") label = "Seen";
+    else if (seen.length && seen.length === others.length) label = "Seen by everyone";
+    else if (seen.length) label = `Seen by ${seen.length}`;
+    return { id: last.id, value: { seen: seen.length > 0, label, title: names || undefined } };
+  }, [messages, members, me.id, room.kind, nameOf]);
+
+  const mentionCandidates: Member[] = useMemo(() => {
+    const pool =
+      room.kind === "channel"
+        ? [...people.values()].map((p) => ({ id: p.id, username: p.username }))
+        : memberList;
+    return pool.filter((p) => p.id !== me.id);
+  }, [room.kind, people, memberList, me.id]);
+
   const typingNames = Object.values(typing);
+  const menuMessage = menu ? (byId.get(menu.message.id) ?? null) : null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-surface px-3 sm:px-5">
-        <Link href="/chat" aria-label="Back to rooms" className="icon-btn -ml-1 md:hidden">
-          <ChevronLeftIcon />
-        </Link>
-        <Avatar id={room.id} name={room.name} shape="square" />
-        <h2 className="min-w-0 truncate font-semibold">{room.name}</h2>
-        <nav aria-label="Room views" className="hidden self-stretch sm:flex">
-          <span
-            aria-current="page"
-            className="relative flex items-center px-3 text-sm font-semibold after:absolute after:inset-x-3 after:bottom-0 after:h-[3px] after:rounded-t-full after:bg-accent-text"
-          >
-            Chat
-          </span>
-        </nav>
+      <RoomHeader
+        room={room}
+        title={title}
+        meId={me.id}
+        members={memberList}
+        here={here}
+        status={status}
+        pinned={pinned}
+        nameOf={nameOf}
+        onJump={jumpTo}
+        onUnpin={togglePin}
+      />
 
-        <div className="ml-auto flex shrink-0 items-center gap-3">
-          {status !== "live" && (
-            <span
-              className={`flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs ${
-                status === "connecting"
-                  ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
-                  : "bg-danger/10 text-danger"
-              }`}
-            >
-              <span
-                className={`h-1.5 w-1.5 rounded-full ${
-                  status === "connecting" ? "animate-pulse bg-amber-500" : "bg-danger"
-                }`}
-              />
-              {status === "connecting" ? "Connecting…" : "Reconnecting…"}
-            </span>
-          )}
-          <div
-            className="flex items-center gap-2"
-            title={online.map((u) => u.username).join(", ")}
-          >
-            <div className="hidden -space-x-1.5 sm:flex">
-              {online.slice(0, 4).map((u) => (
-                <Avatar
-                  key={u.id}
-                  id={u.id}
-                  name={u.username}
-                  size="sm"
-                  className="ring-2 ring-surface"
-                />
-              ))}
-            </div>
-            <span className="flex items-center gap-1 text-sm text-muted">
-              <PeopleIcon className="h-4 w-4" />
-              <span className="sr-only">Online now:</span>
-              {online.length}
-            </span>
-          </div>
-        </div>
-      </header>
-
-      <div ref={listRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
+      <div
+        ref={listRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto [--avatar-ring:var(--background)]"
+      >
         {messages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
-            <Avatar id={room.id} name={room.name} shape="square" size="xl" />
-            <p className="font-semibold">This is the start of {room.name}</p>
+            {room.kind === "channel" ? (
+              <Avatar id={room.id} name={title} shape="square" size="xl" />
+            ) : (
+              <span className="flex h-16 w-16 items-center justify-center rounded-full bg-mine text-accent-text">
+                <PeopleIcon className="h-8 w-8" />
+              </span>
+            )}
+            <p className="font-semibold">
+              {room.kind === "channel"
+                ? `This is the start of ${title}`
+                : `This is the beginning of your chat with ${title}`}
+            </p>
             <p className="text-sm text-muted">Send a message to get the conversation going.</p>
           </div>
         ) : (
-          <ol className="mx-auto flex max-w-5xl flex-col px-3 py-5 sm:px-6">
+          <ol ref={contentRef} className="mx-auto flex max-w-5xl flex-col px-3 py-6 sm:px-6">
+            {hasOlder && (
+              <li className="mb-4 flex justify-center">
+                <button
+                  type="button"
+                  onClick={loadOlder}
+                  disabled={loadingOlder}
+                  className="btn-secondary px-3 py-1 text-xs"
+                >
+                  {loadingOlder ? "Loading…" : "Load earlier messages"}
+                </button>
+              </li>
+            )}
             {messages.map((message, i) => {
               const prev = messages[i - 1];
               // Day labels depend on the viewer's time zone, so they only
@@ -385,21 +688,36 @@ export function ChatRoom({
               const grouped =
                 !!prev &&
                 !newDay &&
+                !message.reply_to &&
                 prev.user_id === message.user_id &&
                 time(message.created_at) - time(prev.created_at) < GROUP_WINDOW_MS;
+              const parentId = message.reply_to;
+              const parent = parentId ? (byId.get(parentId) ?? parents[parentId] ?? null) : null;
               return (
                 <Fragment key={message.id}>
                   {newDay && <DayDivider iso={message.created_at} />}
-                  <MessageRow
+                  <MessageItem
                     message={message}
-                    grouped={grouped}
                     mine={message.user_id === me.id}
+                    grouped={grouped}
+                    authorName={nameOf(message.user_id)}
+                    parent={parent}
+                    parentAuthor={parent ? nameOf(parent.user_id) : ""}
+                    reactions={reactionsByMessage.get(message.id) ?? EMPTY}
+                    nameOf={nameOf}
+                    meId={me.id}
+                    selfName={me.username}
+                    mentionNames={message.mentions.map(nameOf)}
+                    highlighted={highlightId === message.id}
+                    receipt={receipt?.id === message.id ? receipt.value : null}
                     editText={editing?.id === message.id ? editing.text : null}
-                    onEditStart={() => setEditing({ id: message.id, text: message.content })}
-                    onEditChange={(text) => setEditing({ id: message.id, text })}
+                    onReact={toggleReaction}
+                    onReply={startReply}
+                    onMenu={openMenu}
+                    onJump={jumpTo}
+                    onEditChange={changeEdit}
                     onEditSave={saveEdit}
-                    onEditCancel={() => setEditing(null)}
-                    onDelete={() => deleteMessage(message)}
+                    onEditCancel={cancelEdit}
                   />
                 </Fragment>
               );
@@ -408,59 +726,38 @@ export function ChatRoom({
         )}
       </div>
 
-      <form onSubmit={sendMessage} className="shrink-0 px-3 pb-3 sm:px-6 sm:pb-5">
-        <div className="mx-auto max-w-5xl">
-          <p className="flex h-6 items-center gap-2 truncate px-1 text-xs text-muted" aria-live="polite">
-            {typingNames.length > 0 && <TypingDots />}
-            {typingLabel(typingNames)}
-          </p>
-          {error && (
-            <p
-              role="alert"
-              className="mb-2 flex items-center justify-between gap-2 rounded-md bg-danger/10 px-3 py-1.5 text-xs text-danger"
-            >
-              <span>{error}</span>
-              <button
-                type="button"
-                onClick={() => setError(null)}
-                aria-label="Dismiss error"
-                className="rounded p-0.5 hover:bg-danger/10"
-              >
-                <CloseIcon className="h-3.5 w-3.5" />
-              </button>
-            </p>
-          )}
-          <div className="flex items-end gap-1 rounded-md border border-border bg-surface py-1 pl-3 pr-1 shadow-sm transition focus-within:shadow-[inset_0_-2px_0_0_var(--accent-text)]">
-            <textarea
-              value={draft}
-              onChange={(e) => handleDraftChange(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                  e.preventDefault();
-                  void sendMessage();
-                }
-              }}
-              rows={1}
-              maxLength={MAX_LENGTH}
-              placeholder="Type a message"
-              aria-label="Message"
-              className="field-sizing-content max-h-40 min-h-9 flex-1 resize-none bg-transparent py-2 text-sm outline-none placeholder:text-muted"
-            />
-            <button
-              type="submit"
-              disabled={!draft.trim()}
-              aria-label="Send"
-              title="Send (Enter) · Shift + Enter for a new line"
-              className="mb-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-accent-text transition hover:bg-hover disabled:text-muted disabled:hover:bg-transparent"
-            >
-              <SendIcon />
-            </button>
-          </div>
-        </div>
-      </form>
+      <Composer
+        roomId={room.id}
+        candidates={mentionCandidates}
+        replyTo={replyTo}
+        replyAuthor={replyTo ? nameOf(replyTo.user_id) : ""}
+        typingLabel={typingLabel(typingNames)}
+        error={error}
+        onDismissError={() => setError(null)}
+        onCancelReply={() => setReplyTo(null)}
+        onSend={sendMessage}
+        onTyping={handleTyping}
+      />
+
+      {menu && menuMessage && (
+        <MessageMenu
+          state={{ anchor: menu.anchor, message: menuMessage }}
+          mine={menuMessage.user_id === me.id}
+          saved={savedIds.has(menuMessage.id)}
+          onClose={closeMenu}
+          onReply={() => startReply(menuMessage)}
+          onTogglePin={() => togglePin(menuMessage)}
+          onToggleSave={() => toggleSave(menuMessage)}
+          onCopy={() => void navigator.clipboard?.writeText(menuMessage.content)}
+          onEdit={() => setEditing({ id: menuMessage.id, text: menuMessage.content })}
+          onDelete={() => deleteMessage(menuMessage)}
+        />
+      )}
     </div>
   );
 }
+
+const EMPTY: Reaction[] = [];
 
 const noopSubscribe = () => () => {};
 
@@ -503,155 +800,9 @@ function DayDivider({ iso }: { iso: string }) {
   );
 }
 
-function TypingDots() {
-  return (
-    <span aria-hidden className="flex gap-0.5">
-      {[0, 1, 2].map((i) => (
-        <span
-          key={i}
-          className="h-1 w-1 animate-bounce rounded-full bg-muted"
-          style={{ animationDelay: `${i * 150}ms` }}
-        />
-      ))}
-    </span>
-  );
-}
-
 function typingLabel(names: string[]) {
   if (names.length === 0) return "";
   if (names.length === 1) return `${names[0]} is typing…`;
   if (names.length === 2) return `${names[0]} and ${names[1]} are typing…`;
   return "Several people are typing…";
-}
-
-function Timestamp({ iso, className = "" }: { iso: string; className?: string }) {
-  const date = new Date(iso);
-  // Server and browser can be in different time zones; the client value wins.
-  return (
-    <time
-      dateTime={iso}
-      title={date.toLocaleString()}
-      suppressHydrationWarning
-      className={`text-xs text-muted ${className}`}
-    >
-      {date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
-    </time>
-  );
-}
-
-function MessageRow({
-  message,
-  grouped,
-  mine,
-  editText,
-  onEditStart,
-  onEditChange,
-  onEditSave,
-  onEditCancel,
-  onDelete,
-}: {
-  message: ChatMessage;
-  grouped: boolean;
-  mine: boolean;
-  editText: string | null;
-  onEditStart: () => void;
-  onEditChange: (text: string) => void;
-  onEditSave: () => void;
-  onEditCancel: () => void;
-  onDelete: () => void;
-}) {
-  const isEditing = editText !== null;
-  const spacing = grouped ? "mt-0.5" : "mt-4 first:mt-0";
-
-  const body = isEditing ? (
-    <div className="mt-1 space-y-1.5">
-      <textarea
-        autoFocus
-        value={editText}
-        onChange={(e) => onEditChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-            e.preventDefault();
-            onEditSave();
-          } else if (e.key === "Escape") {
-            onEditCancel();
-          }
-        }}
-        maxLength={MAX_LENGTH}
-        aria-label="Edit message"
-        className="input field-sizing-content max-h-40 resize-none"
-      />
-      <div className="flex justify-end gap-2">
-        <button type="button" onClick={onEditCancel} className="btn-secondary px-2.5 py-1 text-xs">
-          Cancel
-        </button>
-        <button type="button" onClick={onEditSave} className="btn-primary px-2.5 py-1 text-xs">
-          Save
-        </button>
-      </div>
-    </div>
-  ) : (
-    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
-      {message.content}
-      {message.edited_at && <span className="ml-1.5 text-xs text-muted">Edited</span>}
-      {message.pending && <span className="ml-1.5 text-xs text-muted">Sending…</span>}
-    </p>
-  );
-
-  if (mine) {
-    return (
-      // tabIndex lets a tap on touch screens focus the row and reveal its actions.
-      <li
-        tabIndex={-1}
-        className={`group relative flex flex-col items-end pl-10 outline-none sm:pl-[20%] ${spacing} ${
-          message.pending ? "opacity-70" : ""
-        }`}
-      >
-        <div className={`max-w-full rounded-md bg-mine px-3.5 py-2 ${isEditing ? "w-full" : ""}`}>
-          {!grouped && <Timestamp iso={message.created_at} className="block" />}
-          {body}
-        </div>
-
-        {!message.pending && !isEditing && (
-          <div className="pointer-events-none absolute -top-4 right-1 z-10 flex gap-0.5 rounded-md border border-border bg-surface p-0.5 opacity-0 shadow-md transition group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
-            <button
-              type="button"
-              onClick={onEditStart}
-              aria-label="Edit message"
-              title="Edit"
-              className="icon-btn h-7 w-7"
-            >
-              <EditIcon className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              onClick={onDelete}
-              aria-label="Delete message"
-              title="Delete"
-              className="icon-btn h-7 w-7 hover:bg-danger/10 hover:text-danger"
-            >
-              <TrashIcon className="h-4 w-4" />
-            </button>
-          </div>
-        )}
-      </li>
-    );
-  }
-
-  return (
-    <li className={`flex gap-2 pr-10 sm:pr-[20%] ${spacing}`}>
-      <div className="w-8 shrink-0">
-        {!grouped && <Avatar id={message.user_id} name={message.username} />}
-      </div>
-      <div className="min-w-0 rounded-md bg-surface px-3.5 py-2 shadow-sm">
-        {!grouped && (
-          <div className="flex items-baseline gap-2">
-            <span className="truncate text-xs font-semibold">{message.username}</span>
-            <Timestamp iso={message.created_at} />
-          </div>
-        )}
-        {body}
-      </div>
-    </li>
-  );
 }

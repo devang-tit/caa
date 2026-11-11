@@ -1,7 +1,8 @@
 # Realtime Chat — Next.js 16 + Supabase
 
-A multi-room chat app where messages, edits, deletes, new rooms, online users and
-"is typing…" indicators update live for everyone.
+A Teams-style chat app: public channels, 1:1 and group chats, replies, reactions,
+@mentions with an Activity feed, file sharing, presence status, read receipts,
+pinned and saved messages, and search — all updating live for everyone.
 
 **Stack:** Next.js 16.4 (App Router, Cache Components, Turbopack) · React 19.3 ·
 Tailwind CSS 4 · `@supabase/supabase-js` 2.119 · `@supabase/ssr` 0.12
@@ -17,6 +18,14 @@ Tailwind CSS 4 · `@supabase/supabase-js` 2.119 · `@supabase/ssr` 0.12
 | Who's online | Realtime **Presence** on the room channel |
 | Typing indicator | Realtime **Broadcast** (ephemeral, never stored) |
 | Optimistic sending | Message shows immediately, then swaps for the saved row (deduped by id) |
+| Channels, 1:1 and group chats | `rooms.kind`; private chats are visible only to rows in `room_members` (RLS). `start_conversation()` reuses an existing 1:1 chat |
+| Replies & reactions | `messages.reply_to` (same conversation only) and `message_reactions`, streamed per room |
+| @mentions & Activity | `messages.mentions`; triggers write `notifications` for mentions, replies and reactions to your messages |
+| Files & images | Private `attachments` Storage bucket (25 MB/file); only people in the conversation can read them, via signed URLs |
+| Status & read receipts | `profiles.status` (Available/Busy/Do not disturb/Away) + a global Presence channel; `room_members.last_read_at` drives "Seen" and unread badges |
+| Pin & save | `toggle_pin()` for anyone in the conversation; `saved_messages` is private per user |
+| Formatting & emoji | Safe Markdown subset (bold, italic, strike, code, links, lists, quotes) rendered as React elements, plus an emoji picker |
+| Search | Top bar searches chats and message text (`pg_trgm` index); results jump to the message in context |
 
 ## Setup
 
@@ -26,11 +35,17 @@ Create one at [supabase.com/dashboard](https://supabase.com/dashboard).
 
 ### 2. Create the database schema
 
-Open **SQL Editor → New query**, paste the contents of
-[`supabase/migrations/20261111000000_realtime_chat.sql`](supabase/migrations/20261111000000_realtime_chat.sql)
-and click **Run**. It creates the `profiles`, `rooms` and `messages` tables, the RLS
-policies and triggers, adds the tables to the Realtime publication, and seeds a
-`general` room. It's safe to run again.
+Open **SQL Editor → New query** and run each file in
+[`supabase/migrations/`](supabase/migrations/) **in order**:
+
+1. [`20261111000000_realtime_chat.sql`](supabase/migrations/20261111000000_realtime_chat.sql)
+   — `profiles`, `rooms`, `messages`, RLS, Realtime, and a seeded `general` channel.
+2. [`20261111120000_teams_features.sql`](supabase/migrations/20261111120000_teams_features.sql)
+   — chats & membership, reactions, replies, mentions, notifications, status, pins,
+   saved messages, the search index and the private `attachments` Storage bucket.
+
+Both are safe to run again. If you re-run the first one, re-run the second one after
+it: the first resets policies and grants that the second tightens.
 
 ### 3. Configure auth
 
@@ -74,18 +89,30 @@ src/
 │       ├── server.ts             # server client + getCurrentUser()
 │       ├── proxy.ts              # updateSession() used by src/proxy.ts
 │       └── realtime.ts           # subscribeToChannel(): Strict-Mode-safe channel lifecycle
-├── components/avatar.tsx
+│   ├── rich-text.tsx             # safe Markdown subset → React elements
+│   └── emoji.ts
+├── components/
+│   ├── session-provider.tsx      # me / people / conversations promises + live status & presence
+│   ├── avatar.tsx, person-avatar.tsx, icons.tsx
 └── app/
     ├── login/                    # sign in / sign up (Server Action + useActionState)
     ├── auth/confirm/route.ts     # email-link landing (PKCE code or token_hash)
     └── chat/
-        ├── layout.tsx            # static shell + streamed sidebar
-        ├── rooms-sidebar.tsx     # live room list, create room, sign out
-        ├── page.tsx              # "pick a room" empty state
+        ├── layout.tsx            # static shell; session data streams in behind <Suspense>
+        ├── app-nav.tsx           # Activity / Chat / Saved rail (bottom bar on phones)
+        ├── rooms-sidebar.tsx     # chats + channels, unread badges, new channel
+        ├── new-chat-dialog.tsx   # people picker → 1:1 or group chat
+        ├── room-search.tsx       # search chats and messages
+        ├── user-menu.tsx         # status + sign out
+        ├── activity/             # mentions, replies, reactions
+        ├── saved/                # saved messages
         └── [roomId]/
-            ├── page.tsx          # loads room + last 50 messages on the server
-            └── chat-room.tsx     # realtime messages, presence, typing, edit/delete
-supabase/migrations/              # database schema
+            ├── page.tsx          # messages, reactions, members, pins; ?m=<id> jumps to a message
+            ├── chat-room.tsx     # realtime state + actions
+            ├── message-item.tsx, message-menu.tsx, room-header.tsx
+            ├── composer.tsx      # formatting, emoji, @mentions, attachments, replies
+            └── attachments.tsx   # signed-URL images and file cards
+supabase/migrations/              # database schema (run in order)
 ```
 
 ## Notes
@@ -99,3 +126,8 @@ supabase/migrations/              # database schema
   so `subscribeToChannel()` waits for the old channel to close before creating a new one.
 - Postgres `DELETE` events can't be filtered and only include the primary key, so the
   room listens table-wide and drops the id if it has it.
+- The people directory (`profiles`) is loaded once per session for avatars, mentions and
+  the people picker. That's fine for a team; a very large org would need paging.
+- The server Supabase client waits for `connection()`: Partial Prefetching can resolve
+  `cookies()` while prerendering a per-session shell, and supabase-js reads the clock on
+  start-up, which prerendering doesn't allow.
