@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import { Avatar } from "@/components/avatar";
 import { HashIcon, PeopleIcon } from "@/components/icons";
 import { PersonAvatar } from "@/components/person-avatar";
+import { postToParent } from "@/lib/embed";
 import { createClient } from "@/lib/supabase/client";
 import { subscribeToChannel } from "@/lib/supabase/realtime";
 import {
@@ -90,6 +91,8 @@ export function RoomsSidebar({
         )
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, ({ new: row }) => {
           const msg = row as Message;
+          // Badge on the embedding widget (no-op when not embedded).
+          if (msg.user_id !== me.id) postToParent({ type: "caa:new-message" });
           if (!knownIdsRef.current.has(msg.room_id)) {
             refetch();
             return;

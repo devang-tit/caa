@@ -5,6 +5,7 @@ import { cookies } from "next/headers";
 import { connection } from "next/server";
 import { cache } from "react";
 import type { Conversation, CurrentUser, Profile, Status } from "@/lib/types";
+import { cookieOptions } from "./cookie-options";
 
 /**
  * Supabase client for Server Components, Server Actions and Route Handlers.
@@ -21,6 +22,7 @@ export async function createClient() {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
     {
+      cookieOptions,
       cookies: {
         getAll() {
           return cookieStore.getAll();

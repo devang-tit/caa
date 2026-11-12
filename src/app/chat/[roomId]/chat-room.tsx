@@ -15,6 +15,7 @@ import {
 import { Avatar } from "@/components/avatar";
 import { PeopleIcon } from "@/components/icons";
 import { usePeople } from "@/components/session-provider";
+import { isChatVisible, onChatVisibilityChange } from "@/lib/embed";
 import { createClient } from "@/lib/supabase/client";
 import { subscribeToChannel } from "@/lib/supabase/realtime";
 import {
@@ -173,7 +174,7 @@ export function ChatRoom({
       void supabase.rpc("mark_room_read", { target: room.id }).then(() => {});
     };
     const request = () => {
-      if (document.visibilityState !== "visible") return;
+      if (!isChatVisible()) return;
       pending = true;
       clearTimeout(timer);
       timer = setTimeout(run, Math.max(0, last + MARK_READ_INTERVAL_MS - Date.now()));
@@ -181,11 +182,11 @@ export function ChatRoom({
 
     requestMarkReadRef.current = request;
     request();
-    document.addEventListener("visibilitychange", request);
+    const stopWatching = onChatVisibilityChange(request);
     return () => {
       clearTimeout(timer);
       if (pending) run();
-      document.removeEventListener("visibilitychange", request);
+      stopWatching();
       requestMarkReadRef.current = () => {};
     };
   }, [room.id]);
