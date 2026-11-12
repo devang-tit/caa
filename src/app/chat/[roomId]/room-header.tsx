@@ -109,7 +109,7 @@ export function RoomHeader({
               ref={pinnedRef}
               id="pinned-messages"
               popover="auto"
-              className="fixed inset-auto right-3 top-28 m-0 max-h-[60vh] w-[min(24rem,calc(100vw-1.5rem))] overflow-y-auto rounded-lg border border-border bg-surface p-0 text-foreground shadow-xl"
+              className="fixed inset-auto right-3 top-28 m-0 max-h-[60vh] w-[min(24rem,calc(100vw-1.5rem))] overflow-y-auto overscroll-contain rounded-lg border border-border bg-surface p-0 text-foreground shadow-xl"
             >
               <p className="border-b border-border px-4 py-3 text-sm font-semibold">Pinned messages</p>
               <ul className="p-1">

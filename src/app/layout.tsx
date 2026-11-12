@@ -1,16 +1,19 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono, Nunito } from "next/font/google";
 import { EMBED_COOKIE, EMBED_ORIGINS } from "@/lib/embed-origins";
 import "./globals.css";
+import { Pwa } from "./pwa";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
 });
 
+// Only for code in messages: not worth delaying the first paint for.
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
+  preload: false,
 });
 
 // The host app's font, used only when embedded. Not preloaded, so a normal
@@ -24,6 +27,25 @@ const nunito = Nunito({
 export const metadata: Metadata = {
   title: "Realtime Chat",
   description: "A realtime chat app built with Next.js and Supabase",
+  applicationName: "Realtime Chat",
+  // Installed on iPhone/iPad: full screen, named "Chat" on the home screen.
+  appleWebApp: { capable: true, title: "Chat", statusBarStyle: "default" },
+  formatDetection: { telephone: false },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  // Draw under the notch/home bar; the layout pads with safe-area insets.
+  viewportFit: "cover",
+  // Android: the on-screen keyboard shrinks the page, so the message box
+  // stays visible above it instead of being covered.
+  interactiveWidget: "resizes-content",
+  // Browser bar / status bar color: matches the app's top bar.
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ebebeb" },
+    { media: "(prefers-color-scheme: dark)", color: "#141414" },
+  ],
 };
 
 // When the app is framed (only EMBED_ORIGINS may frame it, see next.config.ts):
@@ -48,7 +70,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           <script dangerouslySetInnerHTML={{ __html: EMBED_SCRIPT }} />
         </head>
       )}
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {children}
+        <Pwa />
+      </body>
     </html>
   );
 }

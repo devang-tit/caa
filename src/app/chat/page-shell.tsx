@@ -16,7 +16,7 @@ export function PageShell({
         <h1 className="font-semibold">{title}</h1>
         {description && <p className="hidden truncate text-sm text-muted sm:block">{description}</p>}
       </header>
-      <div className="flex-1 overflow-y-auto [--avatar-ring:var(--surface)]">
+      <div className="flex-1 overflow-y-auto overscroll-contain [--avatar-ring:var(--surface)]">
         <div className="mx-auto max-w-3xl px-3 py-5 sm:px-6">{children}</div>
       </div>
     </div>

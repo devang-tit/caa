@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
+import { REALTIME_SUBSCRIBE_STATES } from "@supabase/supabase-js";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Avatar } from "@/components/avatar";
 import { HashIcon, PeopleIcon } from "@/components/icons";
@@ -17,6 +18,7 @@ import {
   type Message,
   type Room,
 } from "@/lib/types";
+import { InstallBanner } from "./install-app";
 import { NewChatButton } from "./new-chat-dialog";
 import { useRoomSearch } from "./room-search";
 
@@ -110,10 +112,22 @@ export function RoomsSidebar({
             ),
           );
         });
+    }, (status) => {
+      // Changes made while disconnected (phone asleep, app in the background)
+      // never arrive, so reload the list on every (re)connect.
+      if (status === REALTIME_SUBSCRIBE_STATES.SUBSCRIBED) refetch();
     });
+
+    let hiddenAt = 0;
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") hiddenAt = Date.now();
+      else if (hiddenAt && Date.now() - hiddenAt > 15_000) refetch();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
       clearTimeout(refetchTimer);
+      document.removeEventListener("visibilitychange", onVisibility);
       unsubscribe();
     };
   }, [me.id]);
@@ -186,6 +200,8 @@ export function RoomsSidebar({
         </div>
       </div>
 
+      <InstallBanner />
+
       {showChannelForm && (
         <form
           id="new-channel"
@@ -221,7 +237,7 @@ export function RoomsSidebar({
         </form>
       )}
 
-      <nav className="flex-1 overflow-y-auto px-2 pb-3" aria-label="Conversations">
+      <nav className="flex-1 overflow-y-auto overscroll-contain px-2 pb-3" aria-label="Conversations">
         {needle && chats.length === 0 && channels.length === 0 && (
           <p className="px-2 py-3 text-sm text-muted">No chats or channels match “{query.trim()}”.</p>
         )}

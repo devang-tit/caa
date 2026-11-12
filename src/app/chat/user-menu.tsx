@@ -8,6 +8,7 @@ import { useMe, useSetLocalProfile } from "@/components/session-provider";
 import { turnOffPush } from "@/lib/push";
 import { createClient } from "@/lib/supabase/client";
 import { STATUS_LABELS, type Status } from "@/lib/types";
+import { InstallMenuItem } from "./install-app";
 import { PushToggle } from "./push-toggle";
 
 const STATUSES: Status[] = ["available", "busy", "dnd", "away"];
@@ -83,6 +84,7 @@ export function UserMenu() {
           {error && <p className="px-3 py-1 text-xs text-danger">{error}</p>}
         </div>
 
+        <InstallMenuItem />
         <PushToggle />
 
         <div className="border-t border-border p-1">

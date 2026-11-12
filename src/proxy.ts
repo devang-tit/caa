@@ -8,8 +8,8 @@ export async function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     // Everything except static assets, image optimization files, and what
-    // must work without a session: the push service worker, the app
-    // manifest, and the database webhooks (they check their own secret).
-    "/((?!_next/static|_next/image|favicon.ico|sw\\.js|manifest\\.webmanifest|api/push|api/cleanup|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    // must work without a session: the service worker and its offline page,
+    // the app manifest, and the database webhooks (they check their own secret).
+    "/((?!_next/static|_next/image|favicon.ico|sw\\.js|offline\\.html|manifest\\.webmanifest|api/push|api/cleanup|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };

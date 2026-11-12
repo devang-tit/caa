@@ -62,6 +62,20 @@ async function download(item: Attachment) {
   if (data?.signedUrl) window.location.assign(data.signedUrl);
 }
 
+const MAX_IMAGE_HEIGHT_PX = 256;
+
+/**
+ * Size for an image whose dimensions are known: as wide as fits, at most
+ * 256px tall, so the space is reserved before it loads and the chat doesn't
+ * jump. Older uploads have no dimensions and size themselves when they load.
+ */
+function imageBox(image: Attachment) {
+  if (!image.width || !image.height) return undefined;
+  const ratio = image.width / image.height;
+  const width = Math.min(image.width, Math.round(MAX_IMAGE_HEIGHT_PX * ratio));
+  return { aspectRatio: `${image.width} / ${image.height}`, width: `min(100%, ${width}px)` };
+}
+
 export function Attachments({ items }: { items: Attachment[] }) {
   const urls = useSignedUrls(items.map((a) => a.path));
   const images = items.filter((a) => a.type.startsWith("image/"));
@@ -71,32 +85,42 @@ export function Attachments({ items }: { items: Attachment[] }) {
     <div className="mt-1.5 space-y-1.5">
       {images.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
-          {images.map((image) =>
-            urls[image.path] ? (
+          {images.map((image) => {
+            const box = imageBox(image);
+            return urls[image.path] ? (
               <a
                 key={image.path}
                 href={urls[image.path]}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="block overflow-hidden rounded-md border border-border"
+                style={box}
+                className="block max-w-full overflow-hidden rounded-md border border-border sm:max-w-sm"
               >
                 {/* Signed, short-lived URLs: next/image's optimizer can't cache these. */}
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={urls[image.path]}
                   alt={image.name}
+                  width={image.width}
+                  height={image.height}
                   loading="lazy"
-                  className="max-h-64 max-w-full object-contain sm:max-w-sm"
+                  decoding="async"
+                  className={
+                    box
+                      ? "block h-full w-full object-cover"
+                      : "max-h-64 max-w-full object-contain sm:max-w-sm"
+                  }
                 />
               </a>
             ) : (
               <span
                 key={image.path}
-                className="block h-40 w-56 animate-pulse rounded-md bg-hover"
+                style={box}
+                className={`block animate-pulse rounded-md bg-hover ${box ? "max-w-full sm:max-w-sm" : "h-40 w-56"}`}
                 aria-label={`Loading ${image.name}`}
               />
-            ),
-          )}
+            );
+          })}
         </div>
       )}
       {files.map((file) => (

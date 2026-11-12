@@ -28,7 +28,7 @@ export default function ChatLayout({ children }: LayoutProps<"/chat">) {
       conversationsPromise={conversationsPromise}
     >
       <RoomSearchProvider>
-        <div className="flex h-dvh flex-col overflow-hidden bg-rail">
+        <div className="flex h-dvh flex-col overflow-hidden bg-rail pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]">
           <header className="flex h-12 shrink-0 items-center gap-3 pr-3 [--avatar-ring:var(--rail)]">
             <div className="flex shrink-0 items-center gap-2 pl-3 md:w-17 md:justify-center md:pl-0">
               <span className="flex h-7 w-7 items-center justify-center rounded-md bg-accent text-accent-foreground">

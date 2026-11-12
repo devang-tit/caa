@@ -69,6 +69,8 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
+  /* No grey flash on tap (iOS/Android). */
+  -webkit-tap-highlight-color: transparent;
 }
 
 * {
@@ -84,8 +86,9 @@ body {
 
 @layer components {
   /* Teams-style field: flat box that gains a brand underline on focus. */
+  /* 16px on phones: iPhone zooms the whole page into smaller fields. */
   .input {
-    @apply w-full rounded-md border border-border bg-surface px-3 py-2 text-sm outline-none transition placeholder:text-muted focus:shadow-[inset_0_-2px_0_0_var(--accent-text)];
+    @apply w-full rounded-md border border-border bg-surface px-3 py-2 text-base outline-none sm:text-sm transition placeholder:text-muted focus:shadow-[inset_0_-2px_0_0_var(--accent-text)];
   }
 
   .btn-primary {
@@ -96,8 +99,9 @@ body {
     @apply inline-flex items-center justify-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 text-sm font-semibold transition hover:bg-hover;
   }
 
+  /* Finger-sized (40px) on touch screens. */
   .icon-btn {
-    @apply inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted transition hover:bg-hover hover:text-foreground;
+    @apply inline-flex h-8 w-8 shrink-0 pointer-coarse:h-10 pointer-coarse:w-10 items-center justify-center rounded-md text-muted transition hover:bg-hover hover:text-foreground;
   }
 }
 

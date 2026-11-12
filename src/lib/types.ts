@@ -40,6 +40,9 @@ export type Attachment = {
   name: string;
   size: number;
   type: string;
+  /** Image size in pixels, so the chat can reserve its space before it loads. */
+  width?: number;
+  height?: number;
 };
 
 export type Message = {
@@ -54,8 +57,11 @@ export type Message = {
   attachments: Attachment[];
   pinned_at: string | null;
   pinned_by: string | null;
-  /** 1:1 chats: when the other person saw it. It disappears DISAPPEAR_AFTER_MS later. */
-  seen_at: string | null;
+  /**
+   * 1:1 chats: when the other person saw it. It disappears DISAPPEAR_AFTER_MS
+   * later. Missing until 20261112020000_disappearing_messages.sql has run.
+   */
+  seen_at?: string | null;
 };
 
 /**
@@ -101,8 +107,10 @@ export type CurrentUser = {
 
 export const ROOM_COLUMNS = "id, name, kind, created_by, created_at" as const;
 
-export const MESSAGE_COLUMNS =
-  "id, room_id, user_id, content, created_at, edited_at, reply_to, mentions, attachments, pinned_at, pinned_by, seen_at" as const;
+// "*" rather than a column list: columns added by later migrations (such as
+// seen_at) come through once they exist, and the app keeps working before
+// they're applied, so a deploy never has to wait for the database.
+export const MESSAGE_COLUMNS = "*" as const;
 
 /** Messages plus their reactions, for loading a conversation. */
 export const MESSAGE_WITH_REACTIONS = `${MESSAGE_COLUMNS}, message_reactions(user_id, emoji)` as const;

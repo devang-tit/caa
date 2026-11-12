@@ -1,3 +1,4 @@
+import { isFramed, isInstalled, isIos } from "@/lib/pwa";
 import { createClient } from "@/lib/supabase/client";
 
 /**
@@ -16,23 +17,6 @@ export type PushState =
   | "denied" // notifications blocked in browser settings
   | "on"
   | "off";
-
-function isFramed() {
-  return window.self !== window.top;
-}
-
-function isIos() {
-  const ua = navigator.userAgent;
-  // iPadOS reports itself as a Mac; touch support gives it away.
-  return /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
-}
-
-function isInstalled() {
-  return (
-    window.matchMedia("(display-mode: standalone)").matches ||
-    (navigator as Navigator & { standalone?: boolean }).standalone === true
-  );
-}
 
 function canPush() {
   return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;

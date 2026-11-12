@@ -49,6 +49,8 @@ const TYPING_THROTTLE_MS = 1500;
 const GROUP_WINDOW_MS = 5 * 60 * 1000;
 const MARK_READ_INTERVAL_MS = 3000;
 const HIGHLIGHT_MS = 2500;
+const RESYNC_LIMIT = 300;
+const RESYNC_AFTER_HIDDEN_MS = 15_000;
 
 const time = (iso: string) => Date.parse(iso);
 const reactionKey = (r: Reaction) => `${r.message_id}|${r.user_id}|${r.emoji}`;
@@ -130,6 +132,9 @@ export function ChatRoom({
   const prependHeightRef = useRef<number | null>(null);
   const requestMarkReadRef = useRef<() => void>(() => {});
   const messagesRef = useRef(messages);
+  // Ids that arrived while a resync was loading (see resync below).
+  const arrivedDuringSyncRef = useRef<Set<string> | null>(null);
+  const resyncRef = useRef<(scope: "latest" | "all") => Promise<void>>(async () => {});
   const editingRef = useRef(editing);
 
   useEffect(() => {
@@ -160,6 +165,99 @@ export function ChatRoom({
     if (data?.length) {
       setParents((prev) => ({ ...prev, ...Object.fromEntries(data.map((p) => [p.id, p])) }));
     }
+  }, []);
+
+  // ── Catching up ────────────────────────────────────────────────────────────
+  // Realtime only delivers changes while connected, and phones drop the
+  // connection whenever the app is in the background. On every (re)connect,
+  // reload messages from `floor` on and merge them in: "latest" (first
+  // connect) covers the gap since the page was rendered, "all" (reconnects)
+  // also picks up edits, deletions, reactions, receipts and pins.
+  const resync = useCallback(
+    async (scope: "latest" | "all") => {
+      if (arrivedDuringSyncRef.current) return; // one at a time
+      const arrived = new Set<string>();
+      arrivedDuringSyncRef.current = arrived;
+      try {
+        const supabase = createClient();
+        const loaded = messagesRef.current.filter((m) => !m.pending);
+        const floor = (scope === "all" ? loaded[0] : loaded.at(-1))?.created_at;
+        const limit = floor ? RESYNC_LIMIT : PAGE_SIZE;
+
+        let query = supabase.from("messages").select(MESSAGE_WITH_REACTIONS).eq("room_id", room.id);
+        if (floor) query = query.gte("created_at", floor);
+        const [latestRes, membersRes, pinnedRes] = await Promise.all([
+          query
+            .order("created_at", { ascending: false })
+            .limit(limit)
+            .overrideTypes<MessageWithReactions[], { merge: false }>(),
+          scope === "all" && room.kind !== "channel"
+            ? supabase
+                .from("room_members")
+                .select("room_id, user_id, last_read_at")
+                .eq("room_id", room.id)
+                .overrideTypes<RoomMember[], { merge: false }>()
+            : null,
+          scope === "all"
+            ? supabase
+                .from("messages")
+                .select(MESSAGE_COLUMNS)
+                .eq("room_id", room.id)
+                .not("pinned_at", "is", null)
+                .order("pinned_at", { ascending: false })
+                .limit(20)
+                .overrideTypes<Message[], { merge: false }>()
+            : null,
+        ]);
+
+        if (latestRes.data) {
+          const rows = latestRes.data;
+          const { messages: fresh, reactions: freshReactions } = splitReactions(rows.slice().reverse());
+          const freshIds = new Set(fresh.map((m) => m.id));
+          // Everything from `start` on is replaced by what the server has now;
+          // older pages and anything that arrived meanwhile stay.
+          const start =
+            rows.length === limit ? time(fresh[0].created_at) : floor ? time(floor) : -Infinity;
+          const stays = (m: ChatMessage) =>
+            !m.pending && !freshIds.has(m.id) && (time(m.created_at) < start || arrived.has(m.id));
+          const keptIds = new Set(messagesRef.current.filter(stays).map((m) => m.id));
+
+          setMessages((prev) => [
+            ...[...prev.filter(stays), ...fresh].sort((a, b) => time(a.created_at) - time(b.created_at)),
+            ...prev.filter((m) => m.pending),
+          ]);
+          setReactions((prev) => [
+            ...prev.filter((r) => keptIds.has(r.message_id) && !freshIds.has(r.message_id)),
+            ...freshReactions,
+          ]);
+          if (!floor) setHasOlder(rows.length === PAGE_SIZE);
+          const replyIds = fresh.map((m) => m.reply_to).filter((id): id is string => !!id);
+          if (replyIds.length) void loadParents(replyIds);
+          if (fresh.some((m) => m.user_id !== me.id)) requestMarkReadRef.current();
+        }
+        if (membersRes?.data) setMembers(membersRes.data);
+        if (pinnedRes?.data) setPinned(pinnedRes.data);
+      } finally {
+        arrivedDuringSyncRef.current = null;
+      }
+    },
+    [room.id, room.kind, me.id, loadParents],
+  );
+
+  useEffect(() => {
+    resyncRef.current = resync;
+  }, [resync]);
+
+  // Back from the background after a while: the connection may have died
+  // without noticing yet, so catch up right away.
+  useEffect(() => {
+    let hiddenAt = 0;
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") hiddenAt = Date.now();
+      else if (hiddenAt && Date.now() - hiddenAt > RESYNC_AFTER_HIDDEN_MS) void resyncRef.current("all");
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
   }, []);
 
   // ── Read state: tell the server we've seen this conversation ───────────────
@@ -217,6 +315,7 @@ export function ChatRoom({
     const supabase = createClient();
     const typingTimers = new Map<string, ReturnType<typeof setTimeout>>();
     const roomFilter = `room_id=eq.${room.id}`;
+    let connectedBefore = false;
 
     const stopTyping = (userId: string) => {
       clearTimeout(typingTimers.get(userId));
@@ -241,6 +340,7 @@ export function ChatRoom({
             { event: "INSERT", schema: "public", table: "messages", filter: roomFilter },
             ({ new: row }) => {
               const msg = row as Message;
+              arrivedDuringSyncRef.current?.add(msg.id);
               stopTyping(msg.user_id);
               setMessages((prev) => upsertMessage(prev, msg));
               if (msg.user_id !== me.id) requestMarkReadRef.current();
@@ -332,6 +432,8 @@ export function ChatRoom({
       (subscribeStatus, channel) => {
         if (subscribeStatus === REALTIME_SUBSCRIBE_STATES.SUBSCRIBED) {
           setStatus("live");
+          void resyncRef.current(connectedBefore ? "all" : "latest");
+          connectedBefore = true;
           // (Re-)announce ourselves; also runs after an automatic reconnect.
           void channel.track({ username: me.username } satisfies PresenceMeta);
         } else if (
@@ -363,7 +465,8 @@ export function ChatRoom({
     }
   }, [messages, reactions]);
 
-  // Images and day dividers change the height after render; stay pinned.
+  // Images and day dividers change the height after render, and the phone
+  // keyboard shrinks the list when it opens: stay pinned to the newest message.
   const hasMessages = messages.length > 0;
   useEffect(() => {
     const list = listRef.current;
@@ -373,6 +476,7 @@ export function ChatRoom({
       if (stickToBottomRef.current) list.scrollTop = list.scrollHeight;
     });
     observer.observe(content);
+    observer.observe(list);
     return () => observer.disconnect();
   }, [hasMessages]);
 
@@ -446,6 +550,7 @@ export function ChatRoom({
       return false;
     }
     // The realtime INSERT may already have added it — upsert dedupes by id.
+    arrivedDuringSyncRef.current?.add(data.id);
     setMessages((prev) => upsertMessage(prev.filter((m) => m.id !== tempId), data));
     return true;
   }
@@ -670,7 +775,7 @@ export function ChatRoom({
       <div
         ref={listRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto [--avatar-ring:var(--background)]"
+        className="flex-1 overflow-y-auto overscroll-contain [--avatar-ring:var(--background)]"
       >
         {messages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">

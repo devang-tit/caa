@@ -27,6 +27,7 @@ import {
   StrikeIcon,
 } from "@/components/icons";
 import { randomId } from "@/lib/compat";
+import { prepareImage } from "@/lib/image";
 import { EMOJI_GROUPS } from "@/lib/emoji";
 import { plainText } from "@/lib/rich-text";
 import { createClient } from "@/lib/supabase/client";
@@ -51,6 +52,8 @@ type Upload = {
   type: string;
   path: string | null;
   status: "uploading" | "ready" | "error";
+  width?: number;
+  height?: number;
 };
 
 type MentionState = { query: string; start: number; index: number };
@@ -198,8 +201,10 @@ export function Composer({
     const space = MAX_FILES - uploads.length;
     if (list.length > space) setLocalError(`You can attach up to ${MAX_FILES} files per message.`);
 
+    // Big photos usually shrink well under the limit, so only other files are
+    // turned away up front.
     const accepted = list.slice(0, Math.max(0, space)).filter((file) => {
-      if (file.size <= MAX_FILE_BYTES) return true;
+      if (file.size <= MAX_FILE_BYTES || file.type.startsWith("image/")) return true;
       setLocalError(`${file.name} is larger than 25 MB.`);
       return false;
     });
@@ -216,15 +221,28 @@ export function Composer({
     const storage = createClient().storage.from("attachments");
     await Promise.all(
       batch.map(async (upload, i) => {
-        const path = `${roomId}/${upload.id}/${safeName(upload.name)}`;
-        const { error } = await storage.upload(path, accepted[i], {
-          contentType: upload.type,
-          upsert: false,
-        });
+        const { file, width, height } = await prepareImage(accepted[i]);
+        if (file.size > MAX_FILE_BYTES) {
+          setLocalError(`${upload.name} is larger than 25 MB.`);
+          setUploads((prev) => prev.filter((u) => u.id !== upload.id));
+          return;
+        }
+        const type = file.type || "application/octet-stream";
+        const path = `${roomId}/${upload.id}/${safeName(file.name)}`;
+        const { error } = await storage.upload(path, file, { contentType: type, upsert: false });
         setUploads((prev) =>
           prev.map((u) =>
             u.id === upload.id
-              ? { ...u, status: error ? "error" : "ready", path: error ? null : path }
+              ? {
+                  ...u,
+                  name: file.name,
+                  size: file.size,
+                  type,
+                  width,
+                  height,
+                  status: error ? "error" : "ready",
+                  path: error ? null : path,
+                }
               : u,
           ),
         );
@@ -252,7 +270,13 @@ export function Composer({
       const name = names.get(id);
       return name && content.includes(`@${name}`);
     });
-    const attachments = ready.map((u) => ({ path: u.path!, name: u.name, size: u.size, type: u.type }));
+    const attachments: Attachment[] = ready.map((u) => ({
+      path: u.path!,
+      name: u.name,
+      size: u.size,
+      type: u.type,
+      ...(u.width && u.height ? { width: u.width, height: u.height } : {}),
+    }));
 
     const snapshot = { draft, mentionIds, uploads };
     setDraft("");
@@ -287,7 +311,7 @@ export function Composer({
         e.preventDefault();
         void send();
       }}
-      className="shrink-0 px-3 pb-3 sm:px-6 sm:pb-5"
+      className="shrink-0 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6 sm:pb-5"
     >
       <div className="mx-auto max-w-5xl">
         <p className="flex h-6 items-center gap-2 truncate px-1 text-xs text-muted" aria-live="polite">
@@ -449,7 +473,7 @@ export function Composer({
             maxLength={MAX_LENGTH}
             placeholder={replyTo ? "Write a reply" : "Type a message"}
             aria-label="Message"
-            className="field-sizing-content block max-h-48 min-h-11 w-full resize-none bg-transparent px-3 py-2.5 text-sm outline-none placeholder:text-muted"
+            className="field-sizing-content block max-h-48 min-h-11 w-full resize-none bg-transparent px-3 py-2.5 text-base outline-none placeholder:text-muted sm:text-sm"
           />
 
           {uploads.length > 0 && (
@@ -502,7 +526,7 @@ export function Composer({
                 <div
                   role="dialog"
                   aria-label="Emoji"
-                  className="absolute bottom-full left-0 z-20 mb-2 h-72 w-72 overflow-y-auto rounded-lg border border-border bg-surface p-2 shadow-xl"
+                  className="absolute bottom-full left-0 z-20 mb-2 h-72 w-72 max-w-[calc(100vw-1.5rem)] overflow-y-auto overscroll-contain rounded-lg border border-border bg-surface p-2 shadow-xl"
                 >
                   {EMOJI_GROUPS.map((group) => (
                     <div key={group.label} className="mb-2">
@@ -545,7 +569,7 @@ export function Composer({
               disabled={!canSend}
               aria-label="Send"
               title="Send (Enter) · Shift + Enter for a new line"
-              className="ml-auto inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-accent-text transition hover:bg-hover disabled:text-muted disabled:hover:bg-transparent"
+              className="ml-auto inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-accent-text pointer-coarse:h-10 pointer-coarse:w-10 transition hover:bg-hover disabled:text-muted disabled:hover:bg-transparent"
             >
               <SendIcon />
             </button>
@@ -574,7 +598,7 @@ function ToolButton({
       aria-label={label}
       aria-pressed={pressed}
       title={label}
-      className={`icon-btn h-8 w-8 ${pressed ? "bg-hover text-accent-text" : ""}`}
+      className={`icon-btn h-8 w-8 pointer-coarse:h-10 pointer-coarse:w-10 ${pressed ? "bg-hover text-accent-text" : ""}`}
     >
       {children}
     </button>

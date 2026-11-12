@@ -124,11 +124,11 @@ export function NewChatButton({ meId }: { meId: string }) {
               }}
               placeholder={selected.length ? "" : "Enter a name"}
               aria-label="Find people"
-              className="min-w-24 flex-1 bg-transparent py-0.5 text-sm outline-none placeholder:text-muted"
+              className="min-w-24 flex-1 bg-transparent py-0.5 text-base outline-none placeholder:text-muted sm:text-sm"
             />
           </div>
 
-          <ul className="max-h-72 space-y-0.5 overflow-y-auto" aria-label="People">
+          <ul className="max-h-72 space-y-0.5 overflow-y-auto overscroll-contain" aria-label="People">
             {matches.length === 0 && (
               <li className="px-2 py-3 text-sm text-muted">
                 {others.length === 0 ? "Nobody else has signed up yet." : "No one matches that name."}

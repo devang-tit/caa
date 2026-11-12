@@ -27,6 +27,10 @@ Tailwind CSS 4 · `@supabase/supabase-js` 2.119 · `@supabase/ssr` 0.12
 | Pin & save | `toggle_pin()` for anyone in the conversation; `saved_messages` is private per user |
 | Formatting & emoji | Safe Markdown subset (bold, italic, strike, code, links, lists, quotes) rendered as React elements, plus an emoji picker |
 | Search | Top bar searches chats and message text (`pg_trgm` index); results jump to the message in context |
+| Installable app (PWA) | `app/manifest.ts` + `public/sw.js`: install from the browser (Android/desktop prompt, iPhone via Add to Home Screen), cached build files for instant starts, an offline page, home-screen shortcuts |
+| Mobile first | 16px fields (no iPhone zoom), finger-sized buttons on touch screens, safe-area insets, keyboard-aware layout, bottom tab bar |
+| Fast photo sharing | Big photos are resized to 2048px and re-encoded (WebP/JPEG) in the browser before upload, usually ~10× smaller; their size is stored so the chat doesn't jump while they load |
+| Catch-up after reconnect | Phones drop the live connection in the background; every reconnect reloads what changed (messages, edits, deletions, reactions, receipts, unread counts) |
 
 ## Setup
 
@@ -156,6 +160,8 @@ src/
 │       └── realtime.ts           # subscribeToChannel(): Strict-Mode-safe channel lifecycle
 │   ├── rich-text.tsx             # safe Markdown subset → React elements
 │   ├── push.ts                   # phone notifications: turn on/off for this browser
+│   ├── pwa.ts                    # service worker registration + install prompt (never when embedded)
+│   ├── image.ts                  # shrinks photos before upload
 │   ├── webhook-secret.ts         # checks the x-push-secret header on database webhooks
 │   └── emoji.ts
 ├── components/
@@ -166,7 +172,8 @@ src/
     ├── auth/confirm/route.ts     # email-link landing (PKCE code or token_hash)
     ├── api/push/route.ts         # called on new messages (trigger/webhook) → web push for 1:1 chats
     ├── api/cleanup/route.ts      # removes files of disappeared messages (called by the database)
-    ├── manifest.ts               # installable app (needed for iPhone notifications)
+    ├── manifest.ts               # installable app (PWA): name, icons, shortcuts
+    ├── pwa.tsx                   # registers the service worker, catches the install prompt
     └── chat/
         ├── layout.tsx            # static shell; session data streams in behind <Suspense>
         ├── app-nav.tsx           # Activity / Chat / Saved rail (bottom bar on phones)
@@ -175,6 +182,7 @@ src/
         ├── room-search.tsx       # search chats and messages
         ├── user-menu.tsx         # status, phone notifications, sign out
         ├── push-toggle.tsx       # "Phone notifications" switch (hidden when embedded)
+        ├── install-app.tsx       # "Install app" menu item and banner
         ├── activity/             # mentions, replies, reactions
         ├── saved/                # saved messages
         └── [roomId]/
@@ -184,7 +192,8 @@ src/
             ├── disappear-timer.tsx  # countdown on seen 1:1 messages
             ├── composer.tsx      # formatting, emoji, @mentions, attachments, replies
             └── attachments.tsx   # signed-URL images and file cards
-public/sw.js                      # service worker: shows notifications, opens the chat on tap
+public/sw.js                      # service worker: caches build files, offline page, notifications
+public/offline.html               # shown by the service worker when there's no connection
 supabase/migrations/              # database schema (run in order)
 ```
 

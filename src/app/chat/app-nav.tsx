@@ -1,5 +1,6 @@
 "use client";
 
+import { REALTIME_SUBSCRIBE_STATES } from "@supabase/supabase-js";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, type ComponentType, type SVGProps } from "react";
@@ -18,6 +19,50 @@ const ITEMS: Item[] = [
   { href: "/chat", label: "Chat", Icon: ChatIcon },
   { href: "/chat/saved", label: "Saved", Icon: BookmarkIcon },
 ];
+
+// The desktop rail and the phone tab bar both show the Activity badge; they
+// share one Realtime subscription instead of opening one each.
+type BadgeEvent = { kind: "new" } | { kind: "count"; count: number };
+const badgeListeners = new Set<(event: BadgeEvent) => void>();
+let stopBadgeChannel: (() => void) | null = null;
+
+function listenForActivity(meId: string, listener: (event: BadgeEvent) => void) {
+  badgeListeners.add(listener);
+  if (!stopBadgeChannel) {
+    const supabase = createClient();
+    const emit = (event: BadgeEvent) => badgeListeners.forEach((l) => l(event));
+    stopBadgeChannel = subscribeToChannel(
+      supabase,
+      `activity-badge:${meId}`,
+      { config: {} },
+      (channel) => {
+        channel.on(
+          "postgres_changes",
+          { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${meId}` },
+          () => emit({ kind: "new" }),
+        );
+      },
+      (status) => {
+        // Recount on every (re)connect: inserts made while disconnected never arrive.
+        if (status !== REALTIME_SUBSCRIBE_STATES.SUBSCRIBED) return;
+        void supabase
+          .from("notifications")
+          .select("id", { count: "exact", head: true })
+          .is("read_at", null)
+          .then(({ count }) => {
+            if (count !== null) emit({ kind: "count", count });
+          });
+      },
+    );
+  }
+  return () => {
+    badgeListeners.delete(listener);
+    if (badgeListeners.size === 0) {
+      stopBadgeChannel?.();
+      stopBadgeChannel = null;
+    }
+  };
+}
 
 function activeHref(pathname: string) {
   if (pathname.startsWith("/chat/activity")) return "/chat/activity";
@@ -50,20 +95,10 @@ export function AppNav({
     if (activeHref(lastPath) === "/chat/activity" || active === "/chat/activity") setUnread(0);
   }
 
-  useEffect(() => {
-    return subscribeToChannel(
-      createClient(),
-      `activity-badge:${variant}:${meId}`,
-      { config: {} },
-      (channel) => {
-        channel.on(
-          "postgres_changes",
-          { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${meId}` },
-          () => setUnread((n) => n + 1),
-        );
-      },
-    );
-  }, [meId, variant]);
+  useEffect(
+    () => listenForActivity(meId, (event) => setUnread((n) => (event.kind === "new" ? n + 1 : event.count))),
+    [meId],
+  );
 
   const badge = active === "/chat/activity" ? 0 : unread;
 

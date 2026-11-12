@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
-import { Suspense } from "react";
+import { cache, Suspense } from "react";
 import { createClient, getCurrentUser } from "@/lib/supabase/server";
 import {
   MESSAGE_COLUMNS,
@@ -19,7 +19,8 @@ const PAGE_SIZE = 50;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 
-async function getRoom(roomId: string) {
+// Cached per request: generateMetadata and the page both need it.
+const getRoom = cache(async (roomId: string) => {
   if (!UUID_RE.test(roomId)) return null;
   const supabase = await createClient();
   // RLS hides private chats you're not in, so they 404 like missing rooms.
@@ -29,7 +30,7 @@ async function getRoom(roomId: string) {
     .eq("id", roomId)
     .maybeSingle<Room>();
   return data;
-}
+});
 
 export async function generateMetadata(
   props: PageProps<"/chat/[roomId]">,
@@ -58,33 +59,32 @@ async function RoomLoader({
   const [{ roomId }, query] = await Promise.all([params, searchParams]);
   const focusId = typeof query.m === "string" && UUID_RE.test(query.m) ? query.m : null;
 
-  const [me, room] = await Promise.all([getCurrentUser(), getRoom(roomId)]);
-  if (!me) redirect("/login");
-  if (!room) notFound();
-
+  if (!UUID_RE.test(roomId)) notFound();
   const supabase = await createClient();
 
-  const latest = supabase
-    .from("messages")
-    .select(MESSAGE_WITH_REACTIONS)
-    .eq("room_id", room.id)
-    .order("created_at", { ascending: false })
-    .limit(PAGE_SIZE)
-    .overrideTypes<MessageWithReactions[], { merge: false }>();
-
-  const [latestRes, membersRes, pinnedRes, savedRes] = await Promise.all([
-    latest,
-    room.kind === "channel"
-      ? Promise.resolve({ data: [] as RoomMember[] })
-      : supabase
-          .from("room_members")
-          .select("room_id, user_id, last_read_at")
-          .eq("room_id", room.id)
-          .overrideTypes<RoomMember[], { merge: false }>(),
+  // One round trip: the room and its contents load together. RLS returns
+  // nothing for a conversation you can't see, and that 404s below.
+  const [me, room, latestRes, membersRes, pinnedRes, savedRes] = await Promise.all([
+    getCurrentUser(),
+    getRoom(roomId),
+    supabase
+      .from("messages")
+      .select(MESSAGE_WITH_REACTIONS)
+      .eq("room_id", roomId)
+      .order("created_at", { ascending: false })
+      .limit(PAGE_SIZE)
+      .overrideTypes<MessageWithReactions[], { merge: false }>(),
+    // Members only matter in private chats (channel rows just track reads).
+    supabase
+      .from("room_members")
+      .select("room_id, user_id, last_read_at, rooms!inner(kind)")
+      .eq("room_id", roomId)
+      .neq("rooms.kind", "channel")
+      .overrideTypes<(RoomMember & { rooms: unknown })[], { merge: false }>(),
     supabase
       .from("messages")
       .select(MESSAGE_COLUMNS)
-      .eq("room_id", room.id)
+      .eq("room_id", roomId)
       .not("pinned_at", "is", null)
       .order("pinned_at", { ascending: false })
       .limit(20)
@@ -92,9 +92,16 @@ async function RoomLoader({
     supabase
       .from("saved_messages")
       .select("message_id, messages!inner(room_id)")
-      .eq("messages.room_id", room.id)
+      .eq("messages.room_id", roomId)
       .overrideTypes<{ message_id: string }[], { merge: false }>(),
   ]);
+  if (!me) redirect("/login");
+  if (!room) notFound();
+  const members: RoomMember[] = (membersRes.data ?? []).map(({ room_id, user_id, last_read_at }) => ({
+    room_id,
+    user_id,
+    last_read_at,
+  }));
 
   let rows = (latestRes.data ?? []).slice().reverse();
   let hasOlder = rows.length === PAGE_SIZE;
@@ -156,7 +163,7 @@ async function RoomLoader({
       initialMessages={messages}
       initialReactions={reactions}
       initialParents={parents ?? []}
-      initialMembers={membersRes.data ?? []}
+      initialMembers={members}
       initialPinned={pinnedRes.data ?? []}
       initialSavedIds={(savedRes.data ?? []).map((s) => s.message_id)}
       initialHasOlder={hasOlder}

@@ -53,14 +53,14 @@ export function RoomSearchBox() {
         aria-autocomplete="list"
         aria-expanded={open && trimmed.length >= 2}
         aria-controls="search-results"
-        className="h-8 w-full rounded-md border border-transparent bg-surface pl-8 pr-3 text-sm outline-none transition placeholder:text-muted hover:border-border focus:border-border focus:shadow-[inset_0_-2px_0_0_var(--accent-text)]"
+        className="h-9 w-full rounded-md border border-transparent bg-surface pl-8 pr-3 text-base outline-none sm:h-8 sm:text-sm transition placeholder:text-muted hover:border-border focus:border-border focus:shadow-[inset_0_-2px_0_0_var(--accent-text)]"
       />
       {open && trimmed.length >= 2 && (
         <div
           id="search-results"
           // Keep focus in the input while clicking a result.
           onMouseDown={(e) => e.preventDefault()}
-          className="absolute inset-x-0 top-full z-40 mt-1 max-h-[70vh] overflow-y-auto rounded-lg border border-border bg-surface py-1 shadow-xl [--avatar-ring:var(--surface)]"
+          className="absolute inset-x-0 top-full z-40 mt-1 max-h-[70vh] overflow-y-auto overscroll-contain rounded-lg border border-border bg-surface py-1 shadow-xl [--avatar-ring:var(--surface)]"
         >
           <Suspense fallback={<p className="px-4 py-3 text-sm text-muted">Searching…</p>}>
             <SearchResults query={trimmed} onNavigate={() => setOpen(false)} />

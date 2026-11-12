@@ -55,13 +55,19 @@ export function MessageMenu({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
+    // Only a width change moves the anchor: on phones the page height also
+    // changes when the keyboard opens or closes, which shouldn't close it.
+    const width = window.innerWidth;
+    const onResize = () => {
+      if (window.innerWidth !== width) onClose();
+    };
     document.addEventListener("pointerdown", onPointer);
     document.addEventListener("keydown", onKey);
-    window.addEventListener("resize", onClose);
+    window.addEventListener("resize", onResize);
     return () => {
       document.removeEventListener("pointerdown", onPointer);
       document.removeEventListener("keydown", onKey);
-      window.removeEventListener("resize", onClose);
+      window.removeEventListener("resize", onResize);
     };
   }, [onClose]);
 
