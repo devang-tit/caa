@@ -26,6 +26,7 @@ import {
   SmileIcon,
   StrikeIcon,
 } from "@/components/icons";
+import { randomId } from "@/lib/compat";
 import { EMOJI_GROUPS } from "@/lib/emoji";
 import { plainText } from "@/lib/rich-text";
 import { createClient } from "@/lib/supabase/client";
@@ -203,7 +204,7 @@ export function Composer({
       return false;
     });
     const batch: Upload[] = accepted.map((file) => ({
-      id: crypto.randomUUID(),
+      id: randomId(),
       name: file.name,
       size: file.size,
       type: file.type || "application/octet-stream",

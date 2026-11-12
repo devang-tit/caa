@@ -15,6 +15,7 @@ import {
 import { Avatar } from "@/components/avatar";
 import { PeopleIcon } from "@/components/icons";
 import { usePeople } from "@/components/session-provider";
+import { copyText } from "@/lib/compat";
 import { isChatVisible, onChatVisibilityChange } from "@/lib/embed";
 import { createClient } from "@/lib/supabase/client";
 import { subscribeToChannel } from "@/lib/supabase/realtime";
@@ -749,7 +750,7 @@ export function ChatRoom({
           onReply={() => startReply(menuMessage)}
           onTogglePin={() => togglePin(menuMessage)}
           onToggleSave={() => toggleSave(menuMessage)}
-          onCopy={() => void navigator.clipboard?.writeText(menuMessage.content)}
+          onCopy={() => void copyText(menuMessage.content)}
           onEdit={() => setEditing({ id: menuMessage.id, text: menuMessage.content })}
           onDelete={() => deleteMessage(menuMessage)}
         />
