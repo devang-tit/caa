@@ -54,7 +54,18 @@ export type Message = {
   attachments: Attachment[];
   pinned_at: string | null;
   pinned_by: string | null;
+  /** 1:1 chats: when the other person saw it. It disappears DISAPPEAR_AFTER_MS later. */
+  seen_at: string | null;
 };
+
+/**
+ * Seen 1:1 messages are deleted this long after they're seen. Keep in step with
+ * delete_seen_messages() in supabase/migrations/20261112020000_disappearing_messages.sql.
+ */
+export const DISAPPEAR_AFTER_MS = 2 * 60 * 1000;
+
+/** When a message seen at `seenAt` disappears, in epoch milliseconds. */
+export const disappearsAt = (seenAt: string) => Date.parse(seenAt) + DISAPPEAR_AFTER_MS;
 
 export type ChatMessage = Message & {
   /** True while an optimistic message is waiting for the database. */
@@ -91,7 +102,7 @@ export type CurrentUser = {
 export const ROOM_COLUMNS = "id, name, kind, created_by, created_at" as const;
 
 export const MESSAGE_COLUMNS =
-  "id, room_id, user_id, content, created_at, edited_at, reply_to, mentions, attachments, pinned_at, pinned_by" as const;
+  "id, room_id, user_id, content, created_at, edited_at, reply_to, mentions, attachments, pinned_at, pinned_by, seen_at" as const;
 
 /** Messages plus their reactions, for loading a conversation. */
 export const MESSAGE_WITH_REACTIONS = `${MESSAGE_COLUMNS}, message_reactions(user_id, emoji)` as const;

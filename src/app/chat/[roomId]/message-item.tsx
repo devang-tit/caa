@@ -7,6 +7,7 @@ import { QUICK_REACTIONS } from "@/lib/emoji";
 import { plainText, RichText } from "@/lib/rich-text";
 import type { ChatMessage, MessagePreview, Reaction } from "@/lib/types";
 import { Attachments } from "./attachments";
+import { DisappearTimer } from "./disappear-timer";
 
 export const MAX_LENGTH = 2000;
 
@@ -84,7 +85,7 @@ export const MessageItem = memo(function MessageItem(props: Props) {
     </div>
   );
 
-  const showMeta = !grouped || message.edited_at || message.pinned_at;
+  const showMeta = !grouped || message.edited_at || message.pinned_at || message.seen_at;
 
   const bubble = (
     <div
@@ -105,6 +106,7 @@ export const MessageItem = memo(function MessageItem(props: Props) {
               Pinned
             </span>
           )}
+          {message.seen_at && <DisappearTimer seenAt={message.seen_at} />}
         </div>
       )}
 

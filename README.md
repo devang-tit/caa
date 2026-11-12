@@ -23,6 +23,7 @@ Tailwind CSS 4 · `@supabase/supabase-js` 2.119 · `@supabase/ssr` 0.12
 | @mentions & Activity | `messages.mentions`; triggers write `notifications` for mentions, replies and reactions to your messages |
 | Files & images | Private `attachments` Storage bucket (25 MB/file); only people in the conversation can read them, via signed URLs |
 | Status & read receipts | `profiles.status` (Available/Busy/Do not disturb/Away) + a global Presence channel; `room_members.last_read_at` drives "Seen" and unread badges |
+| Disappearing 1:1 messages | `mark_room_read()` stamps `messages.seen_at` on the other person's messages; a `pg_cron` job deletes them 2 minutes later (files via `/api/cleanup`). A countdown shows on each seen message |
 | Pin & save | `toggle_pin()` for anyone in the conversation; `saved_messages` is private per user |
 | Formatting & emoji | Safe Markdown subset (bold, italic, strike, code, links, lists, quotes) rendered as React elements, plus an emoji picker |
 | Search | Top bar searches chats and message text (`pg_trgm` index); results jump to the message in context |
@@ -116,6 +117,30 @@ Notifications show the sender's name and the message. Signing out turns them
 off for that device. If you're already looking at the chat, no notification is
 shown.
 
+### 7. Disappearing 1:1 messages
+
+In **1:1 chats**, a message is deleted for both people, with its attachments,
+2 minutes after the other person sees it (has the chat open on screen). A
+small countdown shows on each seen message. Group chats and channels keep
+their messages. Messages sent before you set this up stay.
+
+1. Run [`supabase/migrations/20261112020000_disappearing_messages.sql`](supabase/migrations/20261112020000_disappearing_messages.sql)
+   in the SQL Editor. It turns on the `pg_cron` extension and schedules a job
+   that runs every 10 seconds.
+2. Attachment files are removed by `/api/cleanup`, which uses the Vault
+   entries and environment variables from step 6 (SQL option). Without them,
+   messages still disappear but their files stay in Storage.
+
+To make your existing 1:1 history disappear too (each message 2 minutes after
+it's next seen):
+
+```sql
+update public.messages m set disappears = true
+from public.rooms r where r.id = m.room_id and r.kind = 'direct';
+```
+
+To turn the feature off, run `select cron.unschedule('delete-seen-messages');`.
+
 ## Project structure
 
 ```
@@ -131,6 +156,7 @@ src/
 │       └── realtime.ts           # subscribeToChannel(): Strict-Mode-safe channel lifecycle
 │   ├── rich-text.tsx             # safe Markdown subset → React elements
 │   ├── push.ts                   # phone notifications: turn on/off for this browser
+│   ├── webhook-secret.ts         # checks the x-push-secret header on database webhooks
 │   └── emoji.ts
 ├── components/
 │   ├── session-provider.tsx      # me / people / conversations promises + live status & presence
@@ -139,6 +165,7 @@ src/
     ├── login/                    # sign in / sign up (Server Action + useActionState)
     ├── auth/confirm/route.ts     # email-link landing (PKCE code or token_hash)
     ├── api/push/route.ts         # called on new messages (trigger/webhook) → web push for 1:1 chats
+    ├── api/cleanup/route.ts      # removes files of disappeared messages (called by the database)
     ├── manifest.ts               # installable app (needed for iPhone notifications)
     └── chat/
         ├── layout.tsx            # static shell; session data streams in behind <Suspense>
@@ -154,6 +181,7 @@ src/
             ├── page.tsx          # messages, reactions, members, pins; ?m=<id> jumps to a message
             ├── chat-room.tsx     # realtime state + actions
             ├── message-item.tsx, message-menu.tsx, room-header.tsx
+            ├── disappear-timer.tsx  # countdown on seen 1:1 messages
             ├── composer.tsx      # formatting, emoji, @mentions, attachments, replies
             └── attachments.tsx   # signed-URL images and file cards
 public/sw.js                      # service worker: shows notifications, opens the chat on tap

@@ -204,6 +204,15 @@ export function EyeIcon(props: IconProps) {
   );
 }
 
+export function TimerIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="13.5" r="7.5" />
+      <path d="M12 13.5V10M10 3h4M18 7.5l1.5-1.5" />
+    </Icon>
+  );
+}
+
 export function CheckIcon(props: IconProps) {
   return (
     <Icon {...props}>

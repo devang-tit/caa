@@ -1,7 +1,7 @@
-import { timingSafeEqual } from "node:crypto";
 import webpush from "web-push";
 import { plainText } from "@/lib/rich-text";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { hasValidSecret } from "@/lib/webhook-secret";
 import type { Attachment } from "@/lib/types";
 
 /**
@@ -118,14 +118,6 @@ export async function POST(request: Request) {
   if (gone.length) await db.from("push_subscriptions").delete().in("endpoint", gone);
 
   return Response.json({ sent, removed: gone.length });
-}
-
-function hasValidSecret(received: string | null): boolean {
-  const expected = process.env.PUSH_WEBHOOK_SECRET;
-  if (!expected || !received) return false;
-  const a = Buffer.from(received);
-  const b = Buffer.from(expected);
-  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 function preview(message: NewMessage): string {

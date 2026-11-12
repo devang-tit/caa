@@ -21,6 +21,7 @@ import { createClient } from "@/lib/supabase/client";
 import { subscribeToChannel } from "@/lib/supabase/realtime";
 import {
   conversationTitle,
+  disappearsAt,
   MESSAGE_COLUMNS,
   MESSAGE_WITH_REACTIONS,
   splitReactions,
@@ -191,6 +192,25 @@ export function ChatRoom({
       requestMarkReadRef.current = () => {};
     };
   }, [room.id]);
+
+  // ── Disappearing 1:1 messages: drop each one when its timer runs out ───────
+  // The database deletes it within a few seconds and sends a DELETE as well.
+  useEffect(() => {
+    let next = Infinity;
+    for (const m of messages) if (m.seen_at) next = Math.min(next, disappearsAt(m.seen_at));
+    if (next === Infinity) return;
+
+    const timer = setTimeout(() => {
+      const cutoff = Date.now() + 250; // timers can fire a few ms early
+      const gone = (m: Message) => !!m.seen_at && disappearsAt(m.seen_at) <= cutoff;
+      const ids = new Set(messagesRef.current.filter(gone).map((m) => m.id));
+      setMessages((prev) => (prev.some(gone) ? prev.filter((m) => !gone(m)) : prev));
+      setPinned((prev) => (prev.some(gone) ? prev.filter((m) => !gone(m)) : prev));
+      setReplyTo((prev) => (prev && ids.has(prev.id) ? null : prev));
+      setEditing((prev) => (prev && ids.has(prev.id) ? null : prev));
+    }, Math.max(0, next - Date.now()));
+    return () => clearTimeout(timer);
+  }, [messages]);
 
   // ── Realtime: messages, reactions, read state, presence, typing ────────────
   useEffect(() => {
@@ -408,6 +428,7 @@ export function ChatRoom({
         attachments,
         pinned_at: null,
         pinned_by: null,
+        seen_at: null,
         pending: true,
       },
     ]);
