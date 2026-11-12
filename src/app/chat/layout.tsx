@@ -35,7 +35,7 @@ export default function ChatLayout({ children }: LayoutProps<"/chat">) {
                 <ChatIcon className="h-4 w-4 fill-current" />
               </span>
             </div>
-            <span className="-ml-1 hidden shrink-0 text-sm font-semibold sm:block md:-ml-3">
+            <span className="embed-hide -ml-1 hidden shrink-0 text-sm font-semibold sm:block md:-ml-3">
               Realtime Chat
             </span>
             <RoomSearchBox />
