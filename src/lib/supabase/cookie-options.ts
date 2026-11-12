@@ -2,14 +2,26 @@ import type { CookieOptionsWithName } from "@supabase/ssr";
 import { EMBED_ORIGINS } from "@/lib/embed-origins";
 
 /**
- * Auth cookie options shared by the browser, server and proxy clients.
+ * Auth cookie options inside the embedding widget (a cross-site iframe).
  *
- * When embedding is on (see embed-origins.ts), the chat must stay signed in
- * inside an iframe on another site. Browsers only send SameSite=None cookies
- * to a cross-site iframe, and SameSite=None requires Secure. next.config.ts
- * then limits which sites may frame the app.
+ * Browsers that block third-party cookies (Incognito, Brave, Chrome or Edge
+ * with blocking on) still allow Partitioned ones: they are stored per
+ * top-level site, so the chat stays signed in inside that host page and
+ * nowhere else. Partitioned requires Secure, and a cross-site iframe needs
+ * SameSite=None.
  *
- * Off by default: the @supabase/ssr defaults (SameSite=Lax) apply.
+ * Outside the widget the @supabase/ssr defaults (SameSite=Lax) apply, exactly
+ * as when embedding is off.
  */
-export const cookieOptions: CookieOptionsWithName | undefined =
-  EMBED_ORIGINS.length > 0 ? { sameSite: "none", secure: true } : undefined;
+const EMBEDDED: CookieOptionsWithName = { sameSite: "none", secure: true, partitioned: true };
+
+/** Server side: `hasEmbedMarker` = the request carries the EMBED_COOKIE marker. */
+export function serverCookieOptions(hasEmbedMarker: boolean): CookieOptionsWithName | undefined {
+  return EMBED_ORIGINS.length > 0 && hasEmbedMarker ? EMBEDDED : undefined;
+}
+
+/** Browser side: framed means embedded. */
+export function browserCookieOptions(): CookieOptionsWithName | undefined {
+  const framed = typeof window !== "undefined" && window.self !== window.top;
+  return EMBED_ORIGINS.length > 0 && framed ? EMBEDDED : undefined;
+}

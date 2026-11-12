@@ -4,8 +4,9 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { connection } from "next/server";
 import { cache } from "react";
+import { EMBED_COOKIE } from "@/lib/embed-origins";
 import type { Conversation, CurrentUser, Profile, Status } from "@/lib/types";
-import { cookieOptions } from "./cookie-options";
+import { serverCookieOptions } from "./cookie-options";
 
 /**
  * Supabase client for Server Components, Server Actions and Route Handlers.
@@ -22,7 +23,7 @@ export async function createClient() {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
     {
-      cookieOptions,
+      cookieOptions: serverCookieOptions(cookieStore.has(EMBED_COOKIE)),
       cookies: {
         getAll() {
           return cookieStore.getAll();

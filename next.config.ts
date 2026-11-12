@@ -1,10 +1,17 @@
 import type { NextConfig } from "next";
 
-// Sites allowed to frame the app; empty = no header (see src/lib/embed-origins.ts).
+// Sites allowed to frame the app; empty = no header. Parsed like
+// src/lib/embed-origins.ts: each entry reduced to its origin.
 const embedOrigins = (process.env.NEXT_PUBLIC_EMBED_ORIGINS ?? "")
   .split(",")
-  .map((o) => o.trim())
-  .filter(Boolean);
+  .map((o) => {
+    try {
+      return new URL(o.trim()).origin;
+    } catch {
+      return "null";
+    }
+  })
+  .filter((o) => o !== "null");
 
 const nextConfig: NextConfig = {
   async headers() {
