@@ -15,19 +15,31 @@ const embedOrigins = (process.env.NEXT_PUBLIC_EMBED_ORIGINS ?? "")
 
 const nextConfig: NextConfig = {
   async headers() {
-    if (embedOrigins.length === 0) return [];
-    // Embedding makes the auth cookies SameSite=None, so a signed-in session
-    // would load in any site's iframe. Allow only the listed sites.
     return [
+      // The push service worker: always fetch the latest version.
       {
-        source: "/:path*",
+        source: "/sw.js",
         headers: [
-          {
-            key: "Content-Security-Policy",
-            value: `frame-ancestors 'self' ${embedOrigins.join(" ")}`,
-          },
+          { key: "Content-Type", value: "application/javascript; charset=utf-8" },
+          { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+          { key: "Content-Security-Policy", value: "default-src 'self'; script-src 'self'" },
         ],
       },
+      // In-frame auth cookies are SameSite=None (Partitioned), so a signed-in
+      // session would load in a framing site. Allow only the listed sites.
+      ...(embedOrigins.length > 0
+        ? [
+            {
+              source: "/:path*",
+              headers: [
+                {
+                  key: "Content-Security-Policy",
+                  value: `frame-ancestors 'self' ${embedOrigins.join(" ")}`,
+                },
+              ],
+            },
+          ]
+        : []),
     ];
   },
   /* config options here */

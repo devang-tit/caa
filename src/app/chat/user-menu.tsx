@@ -5,8 +5,10 @@ import { useState } from "react";
 import { Avatar, StatusDot } from "@/components/avatar";
 import { CheckIcon, SignOutIcon } from "@/components/icons";
 import { useMe, useSetLocalProfile } from "@/components/session-provider";
+import { turnOffPush } from "@/lib/push";
 import { createClient } from "@/lib/supabase/client";
 import { STATUS_LABELS, type Status } from "@/lib/types";
+import { PushToggle } from "./push-toggle";
 
 const STATUSES: Status[] = ["available", "busy", "dnd", "away"];
 
@@ -32,6 +34,9 @@ export function UserMenu() {
   }
 
   async function signOut() {
+    // A signed-out phone shouldn't keep showing your messages. Runs before
+    // signOut() because removing the saved subscription needs the session.
+    await turnOffPush().catch(() => {});
     await createClient().auth.signOut();
     router.replace("/login");
     router.refresh();
@@ -77,6 +82,8 @@ export function UserMenu() {
           ))}
           {error && <p className="px-3 py-1 text-xs text-danger">{error}</p>}
         </div>
+
+        <PushToggle />
 
         <div className="border-t border-border p-1">
           <button

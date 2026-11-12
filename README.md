@@ -77,6 +77,45 @@ npm run dev
 Open <http://localhost:3000> in two different browsers (or one normal and one
 private window), sign up as two users, and chat between them.
 
+### 6. Phone notifications (optional)
+
+New messages in **1:1 chats** can notify your phone, even when the site is
+closed. The switch is in the account menu (**Phone notifications**). It only
+appears on the website itself, never when the app is embedded in another
+page's iframe.
+
+1. Run [`supabase/migrations/20261112000000_push_notifications.sql`](supabase/migrations/20261112000000_push_notifications.sql)
+   in the SQL Editor.
+2. Add these environment variables (Vercel → Settings → Environment Variables,
+   or `.env.local`), then redeploy:
+   - `NEXT_PUBLIC_VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY`, generated with
+     `npx web-push generate-vapid-keys`
+   - `PUSH_WEBHOOK_SECRET`, a long random string
+   - `SUPABASE_SECRET_KEY`, from **Project Settings → API Keys** (server only)
+3. Make Supabase call `/api/push` for new messages. Pick **one** of these:
+   - **SQL (works on every dashboard):** store the URL and secret in Vault,
+     then run [`supabase/migrations/20261112010000_push_webhook.sql`](supabase/migrations/20261112010000_push_webhook.sql):
+     ```sql
+     select vault.create_secret('https://<your-site>/api/push', 'push_webhook_url');
+     select vault.create_secret('<PUSH_WEBHOOK_SECRET>', 'push_webhook_secret');
+     ```
+   - **Dashboard:** under **Integrations → Database Webhooks** (older
+     dashboards: **Database → Webhooks**), enable webhooks, then create one:
+     table `messages`, event **Insert**, type **HTTP Request**, **POST** to
+     `https://<your-site>/api/push`, header `x-push-secret` = your
+     `PUSH_WEBHOOK_SECRET`, timeout **5000** ms.
+
+   Using both sends every notification twice.
+4. On the phone, open the site, open the account menu and turn on
+   **Phone notifications**.
+   - **Android:** works in Chrome directly.
+   - **iPhone/iPad (iOS 16.4+):** tap **Share → Add to Home Screen** first,
+     open the app from the home screen, then turn it on.
+
+Notifications show the sender's name and the message. Signing out turns them
+off for that device. If you're already looking at the chat, no notification is
+shown.
+
 ## Project structure
 
 ```
@@ -87,9 +126,11 @@ src/
 │   └── supabase/
 │       ├── client.ts             # browser client (Client Components)
 │       ├── server.ts             # server client + getCurrentUser()
+│       ├── admin.ts              # secret-key client for /api/push (server only)
 │       ├── proxy.ts              # updateSession() used by src/proxy.ts
 │       └── realtime.ts           # subscribeToChannel(): Strict-Mode-safe channel lifecycle
 │   ├── rich-text.tsx             # safe Markdown subset → React elements
+│   ├── push.ts                   # phone notifications: turn on/off for this browser
 │   └── emoji.ts
 ├── components/
 │   ├── session-provider.tsx      # me / people / conversations promises + live status & presence
@@ -97,13 +138,16 @@ src/
 └── app/
     ├── login/                    # sign in / sign up (Server Action + useActionState)
     ├── auth/confirm/route.ts     # email-link landing (PKCE code or token_hash)
+    ├── api/push/route.ts         # called on new messages (trigger/webhook) → web push for 1:1 chats
+    ├── manifest.ts               # installable app (needed for iPhone notifications)
     └── chat/
         ├── layout.tsx            # static shell; session data streams in behind <Suspense>
         ├── app-nav.tsx           # Activity / Chat / Saved rail (bottom bar on phones)
         ├── rooms-sidebar.tsx     # chats + channels, unread badges, new channel
         ├── new-chat-dialog.tsx   # people picker → 1:1 or group chat
         ├── room-search.tsx       # search chats and messages
-        ├── user-menu.tsx         # status + sign out
+        ├── user-menu.tsx         # status, phone notifications, sign out
+        ├── push-toggle.tsx       # "Phone notifications" switch (hidden when embedded)
         ├── activity/             # mentions, replies, reactions
         ├── saved/                # saved messages
         └── [roomId]/
@@ -112,6 +156,7 @@ src/
             ├── message-item.tsx, message-menu.tsx, room-header.tsx
             ├── composer.tsx      # formatting, emoji, @mentions, attachments, replies
             └── attachments.tsx   # signed-URL images and file cards
+public/sw.js                      # service worker: shows notifications, opens the chat on tap
 supabase/migrations/              # database schema (run in order)
 ```
 

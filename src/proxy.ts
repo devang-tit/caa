@@ -7,7 +7,9 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Everything except static assets and image optimization files.
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    // Everything except static assets, image optimization files, and what
+    // must work without a session: the push service worker, the app
+    // manifest, and the push webhook (it checks its own secret).
+    "/((?!_next/static|_next/image|favicon.ico|sw\\.js|manifest\\.webmanifest|api/push|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };
