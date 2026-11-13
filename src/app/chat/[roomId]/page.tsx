@@ -175,16 +175,23 @@ async function RoomLoader({
 function RoomSkeleton() {
   return (
     <div className="flex flex-1 flex-col">
-      <div className="flex h-14 items-center gap-3 border-b border-border bg-surface px-5">
-        <div className="h-8 w-8 animate-pulse rounded-md bg-hover" />
-        <div className="h-3 w-32 animate-pulse rounded bg-hover" />
+      <div className="flex h-16 items-center gap-3 border-b border-border bg-surface px-4">
+        <div className="h-10 w-10 animate-pulse rounded-full bg-hover" />
+        <div className="space-y-1.5">
+          <div className="h-3 w-32 animate-pulse rounded bg-hover" />
+          <div className="h-2.5 w-16 animate-pulse rounded bg-hover" />
+        </div>
       </div>
-      <div className="mx-auto w-full max-w-5xl flex-1 space-y-4 px-3 py-5 sm:px-6">
-        {[60, 40, 75].map((w) => (
-          <div key={w} className="flex gap-2">
-            <div className="h-8 w-8 animate-pulse rounded-full bg-border" />
+      <div className="mx-auto w-full max-w-4xl flex-1 space-y-3 px-3 py-5 sm:px-6">
+        {[
+          { w: 55, mine: false },
+          { w: 40, mine: true },
+          { w: 70, mine: false },
+          { w: 35, mine: true },
+        ].map(({ w, mine }, i) => (
+          <div key={i} className={`flex ${mine ? "justify-end" : ""}`}>
             <div
-              className="h-14 animate-pulse rounded-md bg-surface shadow-sm"
+              className={`h-11 animate-pulse rounded-[20px] ${mine ? "rounded-br-[6px] bg-accent/25" : "rounded-bl-[6px] bg-surface shadow-soft"}`}
               style={{ width: `${w}%` }}
             />
           </div>

@@ -188,6 +188,11 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const EMOJI_ONLY_RE = /^(?:\p{Extended_Pictographic}|\p{Emoji_Modifier}|‍|️|\s)+$/u;
 
+/** Short emoji-only messages show big, without a bubble. */
+export function isBigEmoji(text: string) {
+  return EMOJI_ONLY_RE.test(text) && Array.from(text.trim()).length <= 8;
+}
+
 export function RichText({
   text,
   mentionNames = [],
@@ -200,9 +205,8 @@ export function RichText({
 }) {
   if (!text.trim()) return null;
 
-  // Teams shows short emoji-only messages big.
-  if (EMOJI_ONLY_RE.test(text) && Array.from(text.trim()).length <= 8) {
-    return <p className="text-3xl leading-tight">{text.trim()}</p>;
+  if (isBigEmoji(text)) {
+    return <p className="text-4xl leading-tight">{text.trim()}</p>;
   }
 
   const names = [...new Set(mentionNames)].sort((a, b) => b.length - a.length).map(escapeRe);
@@ -212,7 +216,7 @@ export function RichText({
   };
 
   return (
-    <div className="space-y-1.5 break-words text-sm leading-relaxed">
+    <div className="space-y-1.5 text-[15px] leading-[1.4] break-words sm:text-sm sm:leading-relaxed">
       {parseBlocks(text).map((block, i) => {
         const key = String(i);
         switch (block.type) {
@@ -220,7 +224,7 @@ export function RichText({
             return (
               <pre
                 key={key}
-                className="overflow-x-auto rounded-md bg-black/5 p-2.5 font-mono text-xs leading-normal dark:bg-white/10"
+                className="overflow-x-auto rounded-lg bg-black/5 p-2.5 font-mono text-xs leading-normal dark:bg-white/10"
               >
                 <code>{block.code}</code>
               </pre>

@@ -14,7 +14,7 @@ import {
   type Attachment,
   type Notification,
 } from "@/lib/types";
-import { EmptyList } from "../page-shell";
+import { EmptyList, LIST_CLASS, ROW_DIVIDER } from "../page-shell";
 
 export function ActivityFeed({ meId, initialItems }: { meId: string; initialItems: ActivityItem[] }) {
   const people = usePeople();
@@ -67,45 +67,63 @@ export function ActivityFeed({ meId, initialItems }: { meId: string; initialItem
   const nameOf = (id: string | null) => (id ? people.get(id)?.username ?? "Someone" : "Someone");
 
   return (
-    <ul className="overflow-hidden rounded-lg border border-border bg-surface">
+    <ul className={LIST_CLASS}>
       {items.map((item) => {
         const where = titles.get(item.room_id);
         const snippet =
           plainText(item.messages?.content ?? "") ||
           (item.messages?.attachments?.[0] ? `📎 ${item.messages.attachments[0].name}` : "");
         const href = item.message_id ? `/chat/${item.room_id}?m=${item.message_id}` : `/chat/${item.room_id}`;
+        const isNew = fresh.has(item.id);
         return (
-          <li key={item.id} className="border-b border-border last:border-0">
+          <li key={item.id} className="group/row">
             <Link
               href={href}
-              className={`flex gap-3 px-4 py-3 transition hover:bg-hover ${
-                fresh.has(item.id) ? "bg-mine/50" : ""
+              className={`relative flex gap-3 pl-4 transition hover:bg-hover active:bg-hover md:pr-4 ${
+                isNew ? "bg-accent-soft/50" : ""
               }`}
             >
-              {item.actor_id ? (
-                <PersonAvatar userId={item.actor_id} />
-              ) : (
-                <span className="h-8 w-8 shrink-0 rounded-full bg-hover" />
+              {isNew && (
+                <span aria-label="New" className="absolute top-1/2 left-1.5 h-2 w-2 -translate-y-1/2 rounded-full bg-accent" />
               )}
-              <div className="min-w-0 flex-1">
-                <p className="text-sm">
-                  <span className="font-semibold">{nameOf(item.actor_id)}</span>{" "}
-                  {item.kind === "mention"
-                    ? "mentioned you"
-                    : item.kind === "reply"
-                      ? "replied to you"
-                      : `reacted ${item.emoji ?? ""} to your message`}
-                  {where && <span className="text-muted"> in {where}</span>}
-                </p>
-                {snippet && <p className="mt-0.5 line-clamp-2 text-sm text-muted">{snippet}</p>}
+              <span className="relative mt-3 self-start">
+                {item.actor_id ? (
+                  <PersonAvatar userId={item.actor_id} size="lg" showStatus={false} />
+                ) : (
+                  <span className="block h-10 w-10 rounded-full bg-hover" />
+                )}
+                <span
+                  aria-hidden
+                  className="absolute -right-1 -bottom-1 flex h-5 w-5 items-center justify-center rounded-full bg-surface text-[11px] shadow-soft ring-2 ring-[color:var(--avatar-ring,var(--surface))]"
+                >
+                  {item.kind === "mention" ? "@" : item.kind === "reply" ? "↩" : (item.emoji ?? "♥")}
+                </span>
+              </span>
+              <div className={`min-w-0 flex-1 py-3 pr-4 md:pr-0 ${ROW_DIVIDER}`}>
+                <div className="flex items-baseline gap-2">
+                  <p className="min-w-0 flex-1 text-[15px] leading-snug sm:text-sm">
+                    <span className="font-semibold">{nameOf(item.actor_id)}</span>{" "}
+                    {item.kind === "mention"
+                      ? "mentioned you"
+                      : item.kind === "reply"
+                        ? "replied to you"
+                        : `reacted ${item.emoji ?? ""} to your message`}
+                    {where && <span className="text-muted"> in {where}</span>}
+                  </p>
+                  <time
+                    dateTime={item.created_at}
+                    suppressHydrationWarning
+                    className="shrink-0 text-xs text-muted"
+                  >
+                    {new Date(item.created_at).toLocaleDateString([], { month: "short", day: "numeric" })}
+                  </time>
+                </div>
+                {snippet && (
+                  <p className="mt-1 line-clamp-2 rounded-lg border-l-2 border-accent-text/50 bg-background/80 px-2.5 py-1 text-sm text-muted md:bg-hover/60">
+                    {snippet}
+                  </p>
+                )}
               </div>
-              <time
-                dateTime={item.created_at}
-                suppressHydrationWarning
-                className="shrink-0 text-xs text-muted"
-              >
-                {new Date(item.created_at).toLocaleDateString([], { month: "short", day: "numeric" })}
-              </time>
             </Link>
           </li>
         );

@@ -11,6 +11,7 @@ import {
 } from "react";
 import { Avatar } from "@/components/avatar";
 import {
+  ArrowUpIcon,
   BoldIcon,
   CloseIcon,
   CodeIcon,
@@ -20,9 +21,8 @@ import {
   LinkIcon,
   ListIcon,
   ListOrderedIcon,
-  PaperclipIcon,
+  PlusIcon,
   QuoteIcon,
-  SendIcon,
   SmileIcon,
   StrikeIcon,
 } from "@/components/icons";
@@ -54,6 +54,8 @@ type Upload = {
   status: "uploading" | "ready" | "error";
   width?: number;
   height?: number;
+  /** Local object URL for an image thumbnail while composing. */
+  preview?: string;
 };
 
 type MentionState = { query: string; start: number; index: number };
@@ -65,7 +67,6 @@ export function Composer({
   candidates,
   replyTo,
   replyAuthor,
-  typingLabel,
   error,
   onDismissError,
   onCancelReply,
@@ -77,7 +78,6 @@ export function Composer({
   candidates: Member[];
   replyTo: MessagePreview | null;
   replyAuthor: string;
-  typingLabel: string;
   error: string | null;
   onDismissError: () => void;
   onCancelReply: () => void;
@@ -96,7 +96,21 @@ export function Composer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const emojiRef = useRef<HTMLDivElement>(null);
+  const emojiButtonRef = useRef<HTMLButtonElement>(null);
   const pendingSelection = useRef<[number, number] | null>(null);
+  const uploadsRef = useRef(uploads);
+
+  useEffect(() => {
+    uploadsRef.current = uploads;
+  });
+
+  // Thumbnails are object URLs: release whatever is still attached on leaving.
+  useEffect(
+    () => () => {
+      for (const u of uploadsRef.current) if (u.preview) URL.revokeObjectURL(u.preview);
+    },
+    [],
+  );
 
   // Restore the caret after programmatic edits (formatting, mentions, emoji).
   useLayoutEffect(() => {
@@ -115,7 +129,11 @@ export function Composer({
   useEffect(() => {
     if (!emojiOpen) return;
     const onPointer = (e: PointerEvent) => {
-      if (!emojiRef.current?.contains(e.target as Node)) setEmojiOpen(false);
+      const target = e.target as Node;
+      // The toggle button handles its own clicks.
+      if (!emojiRef.current?.contains(target) && !emojiButtonRef.current?.contains(target)) {
+        setEmojiOpen(false);
+      }
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setEmojiOpen(false);
@@ -215,6 +233,7 @@ export function Composer({
       type: file.type || "application/octet-stream",
       path: null,
       status: "uploading",
+      preview: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined,
     }));
     setUploads((prev) => [...prev, ...batch]);
 
@@ -225,6 +244,7 @@ export function Composer({
         if (file.size > MAX_FILE_BYTES) {
           setLocalError(`${upload.name} is larger than 25 MB.`);
           setUploads((prev) => prev.filter((u) => u.id !== upload.id));
+          if (upload.preview) URL.revokeObjectURL(upload.preview);
           return;
         }
         const type = file.type || "application/octet-stream";
@@ -252,6 +272,7 @@ export function Composer({
 
   function removeUpload(upload: Upload) {
     setUploads((prev) => prev.filter((u) => u.id !== upload.id));
+    if (upload.preview) URL.revokeObjectURL(upload.preview);
     if (upload.path) void createClient().storage.from("attachments").remove([upload.path]);
   }
 
@@ -286,7 +307,9 @@ export function Composer({
     setLocalError(null);
 
     const ok = await onSend({ content, mentions, attachments, replyTo });
-    if (!ok) {
+    if (ok) {
+      for (const u of snapshot.uploads) if (u.preview) URL.revokeObjectURL(u.preview);
+    } else {
       setDraft((current) => current || snapshot.draft);
       setMentionIds(snapshot.mentionIds);
       setUploads((current) => (current.length ? current : snapshot.uploads));
@@ -311,18 +334,20 @@ export function Composer({
         e.preventDefault();
         void send();
       }}
-      className="shrink-0 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6 sm:pb-5"
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={onDrop}
+      className="shrink-0 px-2 pt-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:px-4 sm:pb-4"
     >
-      <div className="mx-auto max-w-5xl">
-        <p className="flex h-6 items-center gap-2 truncate px-1 text-xs text-muted" aria-live="polite">
-          {typingLabel && <TypingDots />}
-          {typingLabel}
-        </p>
-
+      <div className="relative mx-auto max-w-4xl">
         {shownError && (
           <p
             role="alert"
-            className="mb-2 flex items-center justify-between gap-2 rounded-md bg-danger/10 px-3 py-1.5 text-xs text-danger"
+            className="animate-rise-in mb-2 flex items-center justify-between gap-2 rounded-2xl bg-danger/10 px-3.5 py-2 text-sm text-danger"
           >
             <span>{shownError}</span>
             <button
@@ -332,248 +357,281 @@ export function Composer({
                 onDismissError();
               }}
               aria-label="Dismiss error"
-              className="rounded p-0.5 hover:bg-danger/10"
+              className="rounded-full p-1 hover:bg-danger/10"
             >
-              <CloseIcon className="h-3.5 w-3.5" />
+              <CloseIcon className="h-4 w-4" />
             </button>
           </p>
         )}
 
-        <div
-          onDragOver={(e) => {
-            if (!e.dataTransfer.types.includes("Files")) return;
-            e.preventDefault();
-            setDragging(true);
-          }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={onDrop}
-          className={`relative rounded-md border bg-surface shadow-sm transition focus-within:shadow-[inset_0_-2px_0_0_var(--accent-text)] ${
-            dragging ? "border-accent-text border-dashed" : "border-border"
-          }`}
-        >
-          {mention && matches.length > 0 && (
-            <ul
-              role="listbox"
-              aria-label="Mention someone"
-              className="absolute bottom-full left-0 z-20 mb-1 w-64 overflow-hidden rounded-lg border border-border bg-surface p-1 shadow-xl"
-            >
-              {matches.map((person, i) => (
-                <li key={person.id} role="option" aria-selected={i === mention.index}>
-                  <button
-                    type="button"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => pickMention(person)}
-                    className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${
-                      i === mention.index ? "bg-hover" : "hover:bg-hover"
-                    }`}
-                  >
-                    <Avatar id={person.id} name={person.username} size="sm" />
-                    <span className="truncate">{person.username}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {replyTo && (
-            <div className="mx-2 mt-2 flex items-start gap-2 rounded border-l-[3px] border-accent-text/60 bg-black/[0.04] px-2 py-1.5 text-xs dark:bg-white/5">
-              <div className="min-w-0 flex-1">
-                <p className="font-semibold">Replying to {replyAuthor}</p>
-                <p className="truncate text-muted">
-                  {plainText(replyTo.content) ||
-                    (replyTo.attachments[0] ? `📎 ${replyTo.attachments[0].name}` : "")}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={onCancelReply}
-                aria-label="Cancel reply"
-                className="rounded p-0.5 text-muted hover:bg-hover hover:text-foreground"
-              >
-                <CloseIcon className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          )}
-
-          {showFormat && (
-            <div
-              role="toolbar"
-              aria-label="Formatting"
-              className="flex flex-wrap items-center gap-0.5 border-b border-border px-1.5 py-1"
-            >
-              <FormatButton label="Bold (Ctrl+B)" Icon={BoldIcon} onClick={() => wrap("**")} />
-              <FormatButton label="Italic (Ctrl+I)" Icon={ItalicIcon} onClick={() => wrap("*")} />
-              <FormatButton label="Strikethrough" Icon={StrikeIcon} onClick={() => wrap("~~")} />
-              <span className="mx-1 h-5 w-px bg-border" />
-              <FormatButton label="Code" Icon={CodeIcon} onClick={() => wrap("`", "`", "code")} />
-              <FormatButton
-                label="Code block"
-                Icon={CodeBlockIcon}
-                onClick={() => wrap("```\n", "\n```", "code")}
-              />
-              <FormatButton
-                label="Link"
-                Icon={LinkIcon}
-                onClick={() => wrap("[", "](https://)", "link text")}
-              />
-              <span className="mx-1 h-5 w-px bg-border" />
-              <FormatButton label="Bulleted list" Icon={ListIcon} onClick={() => prefixLines(() => "- ")} />
-              <FormatButton
-                label="Numbered list"
-                Icon={ListOrderedIcon}
-                onClick={() => prefixLines((i) => `${i + 1}. `)}
-              />
-              <FormatButton label="Quote" Icon={QuoteIcon} onClick={() => prefixLines(() => "> ")} />
-            </div>
-          )}
-
-          <textarea
-            ref={textareaRef}
-            value={draft}
-            onChange={(e) => changeDraft(e.target.value, e.target.selectionStart)}
-            onClick={(e) => changeDraft(e.currentTarget.value, e.currentTarget.selectionStart)}
-            onPaste={(e) => {
-              if (e.clipboardData.files.length) {
-                e.preventDefault();
-                void addFiles(e.clipboardData.files);
-              }
-            }}
-            onKeyDown={(e) => {
-              if (mention && matches.length) {
-                if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-                  e.preventDefault();
-                  const step = e.key === "ArrowDown" ? 1 : -1;
-                  setMention({ ...mention, index: (mention.index + step + matches.length) % matches.length });
-                  return;
-                }
-                if (e.key === "Enter" || e.key === "Tab") {
-                  e.preventDefault();
-                  pickMention(matches[mention.index]);
-                  return;
-                }
-                if (e.key === "Escape") {
-                  e.preventDefault();
-                  setMention(null);
-                  return;
-                }
-              }
-              if ((e.metaKey || e.ctrlKey) && (e.key === "b" || e.key === "i")) {
-                e.preventDefault();
-                wrap(e.key === "b" ? "**" : "*");
-                return;
-              }
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault();
-                void send();
-              } else if (e.key === "Escape" && replyTo) {
-                onCancelReply();
-              }
-            }}
-            rows={1}
-            maxLength={MAX_LENGTH}
-            placeholder={replyTo ? "Write a reply" : "Type a message"}
-            aria-label="Message"
-            className="field-sizing-content block max-h-48 min-h-11 w-full resize-none bg-transparent px-3 py-2.5 text-base outline-none placeholder:text-muted sm:text-sm"
-          />
-
-          {uploads.length > 0 && (
-            <ul className="flex flex-wrap gap-1.5 px-2 pb-2" aria-label="Attachments">
-              {uploads.map((upload) => (
-                <li
-                  key={upload.id}
-                  className={`flex max-w-56 items-center gap-2 rounded-md border px-2 py-1 text-xs ${
-                    upload.status === "error" ? "border-danger text-danger" : "border-border"
+        {mention && matches.length > 0 && (
+          <ul
+            role="listbox"
+            aria-label="Mention someone"
+            className="animate-rise-in absolute bottom-full left-0 z-20 mb-2 w-full overflow-hidden rounded-2xl bg-surface p-1.5 shadow-float ring-1 ring-border sm:w-72"
+          >
+            {matches.map((person, i) => (
+              <li key={person.id} role="option" aria-selected={i === mention.index}>
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => pickMention(person)}
+                  className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[15px] sm:text-sm ${
+                    i === mention.index ? "bg-hover" : "hover:bg-hover"
                   }`}
                 >
-                  <FileIcon className="h-4 w-4 shrink-0 text-accent-text" />
-                  <span className="min-w-0">
-                    <span className="block truncate font-semibold">{upload.name}</span>
-                    <span className="text-muted">
-                      {upload.status === "uploading"
-                        ? "Uploading…"
-                        : upload.status === "error"
-                          ? "Upload failed"
-                          : formatBytes(upload.size)}
-                    </span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => removeUpload(upload)}
-                    aria-label={`Remove ${upload.name}`}
-                    className="shrink-0 rounded p-0.5 text-muted hover:bg-hover hover:text-foreground"
-                  >
-                    <CloseIcon className="h-3.5 w-3.5" />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+                  <Avatar id={person.id} name={person.username} size="sm" />
+                  <span className="truncate">{person.username}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
 
-          <div className="flex items-center gap-0.5 px-1.5 pb-1.5">
-            <ToolButton
-              label={showFormat ? "Hide formatting" : "Format"}
-              pressed={showFormat}
-              onClick={() => setShowFormat((v) => !v)}
-            >
-              <FormatIcon className="h-[18px] w-[18px]" />
-            </ToolButton>
-
-            <div ref={emojiRef} className="relative">
-              <ToolButton label="Emoji" pressed={emojiOpen} onClick={() => setEmojiOpen((v) => !v)}>
-                <SmileIcon className="h-[18px] w-[18px]" />
-              </ToolButton>
-              {emojiOpen && (
-                <div
-                  role="dialog"
-                  aria-label="Emoji"
-                  className="absolute bottom-full left-0 z-20 mb-2 h-72 w-72 max-w-[calc(100vw-1.5rem)] overflow-y-auto overscroll-contain rounded-lg border border-border bg-surface p-2 shadow-xl"
-                >
-                  {EMOJI_GROUPS.map((group) => (
-                    <div key={group.label} className="mb-2">
-                      <p className="px-1 pb-1 text-xs font-semibold text-muted">{group.label}</p>
-                      <div className="grid grid-cols-8">
-                        {group.emoji.map((emoji) => (
-                          <button
-                            key={emoji}
-                            type="button"
-                            onClick={() => insert(emoji)}
-                            aria-label={emoji}
-                            className="flex h-8 w-8 items-center justify-center rounded text-lg hover:bg-hover"
-                          >
-                            {emoji}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
+        {emojiOpen && (
+          <div
+            ref={emojiRef}
+            role="dialog"
+            aria-label="Emoji"
+            className="animate-rise-in absolute right-0 bottom-full left-0 z-20 mb-2 h-72 overflow-y-auto overscroll-contain rounded-3xl bg-surface p-3 shadow-float ring-1 ring-border sm:left-auto sm:w-88"
+          >
+            {EMOJI_GROUPS.map((group) => (
+              <div key={group.label} className="mb-2">
+                <p className="sticky -top-3 z-[1] -mx-3 bg-surface/95 px-4 pt-1 pb-1.5 text-xs font-semibold text-muted">
+                  {group.label}
+                </p>
+                <div className="grid grid-cols-8">
+                  {group.emoji.map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      onClick={() => insert(emoji)}
+                      aria-label={emoji}
+                      className="flex aspect-square items-center justify-center rounded-xl text-2xl transition hover:bg-hover active:scale-90"
+                    >
+                      {emoji}
+                    </button>
                   ))}
                 </div>
-              )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {replyTo && (
+          <div className="animate-rise-in mb-2 flex items-center gap-3 rounded-2xl bg-surface py-2 pr-2 pl-3 shadow-soft ring-1 ring-border">
+            <span className="h-9 w-[3px] shrink-0 rounded-full bg-accent" />
+            <div className="min-w-0 flex-1 text-[13px] leading-snug">
+              <p className="font-semibold text-accent-text">Replying to {replyAuthor}</p>
+              <p className="truncate text-muted">
+                {plainText(replyTo.content) ||
+                  (replyTo.attachments[0] ? `📎 ${replyTo.attachments[0].name}` : "")}
+              </p>
             </div>
-
-            <ToolButton label="Attach files" onClick={() => fileRef.current?.click()}>
-              <PaperclipIcon className="h-[18px] w-[18px]" />
-            </ToolButton>
-            <input
-              ref={fileRef}
-              type="file"
-              multiple
-              hidden
-              onChange={(e) => {
-                if (e.target.files?.length) void addFiles(e.target.files);
-                e.target.value = "";
-              }}
-            />
-
             <button
-              type="submit"
-              disabled={!canSend}
-              aria-label="Send"
-              title="Send (Enter) · Shift + Enter for a new line"
-              className="ml-auto inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-accent-text pointer-coarse:h-10 pointer-coarse:w-10 transition hover:bg-hover disabled:text-muted disabled:hover:bg-transparent"
+              type="button"
+              onClick={onCancelReply}
+              aria-label="Cancel reply"
+              className="icon-btn h-8 w-8 pointer-coarse:h-9 pointer-coarse:w-9"
             >
-              <SendIcon />
+              <CloseIcon className="h-4 w-4" />
             </button>
           </div>
+        )}
+
+        {uploads.length > 0 && (
+          <ul className="mb-2 flex gap-2 overflow-x-auto pt-1.5 pb-1 [scrollbar-width:none]" aria-label="Attachments">
+            {uploads.map((upload) => (
+              <li key={upload.id} className="animate-rise-in relative shrink-0">
+                {upload.preview ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={upload.preview}
+                    alt={upload.name}
+                    className={`h-16 w-16 rounded-2xl object-cover ring-1 ring-border ${
+                      upload.status === "error" ? "opacity-40" : ""
+                    }`}
+                  />
+                ) : (
+                  <span
+                    className={`flex h-16 w-52 items-center gap-2.5 rounded-2xl bg-surface px-3 ring-1 ${
+                      upload.status === "error" ? "text-danger ring-danger" : "ring-border"
+                    }`}
+                  >
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-foreground">
+                      <FileIcon className="h-[18px] w-[18px]" />
+                    </span>
+                    <span className="min-w-0 text-xs">
+                      <span className="block truncate font-semibold">{upload.name}</span>
+                      <span className="text-muted">{formatBytes(upload.size)}</span>
+                    </span>
+                  </span>
+                )}
+                {upload.status !== "ready" && (
+                  <span
+                    className={`absolute inset-0 flex items-center justify-center rounded-2xl text-[11px] font-semibold ${
+                      upload.status === "error" ? "text-danger" : "bg-black/30 text-white"
+                    }`}
+                  >
+                    {upload.status === "uploading" ? (
+                      <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                    ) : (
+                      "Failed"
+                    )}
+                    <span className="sr-only">
+                      {upload.status === "uploading" ? `Uploading ${upload.name}` : `${upload.name} failed`}
+                    </span>
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => removeUpload(upload)}
+                  aria-label={`Remove ${upload.name}`}
+                  className="absolute -top-1.5 -right-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-foreground text-background shadow-soft ring-2 ring-background"
+                >
+                  <CloseIcon className="h-3.5 w-3.5" strokeWidth={2.2} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {showFormat && (
+          <div
+            role="toolbar"
+            aria-label="Formatting"
+            className="animate-rise-in mb-2 flex w-fit max-w-full items-center gap-0.5 overflow-x-auto rounded-full bg-surface p-1 shadow-soft ring-1 ring-border [scrollbar-width:none]"
+          >
+            <FormatButton label="Bold (Ctrl+B)" Icon={BoldIcon} onClick={() => wrap("**")} />
+            <FormatButton label="Italic (Ctrl+I)" Icon={ItalicIcon} onClick={() => wrap("*")} />
+            <FormatButton label="Strikethrough" Icon={StrikeIcon} onClick={() => wrap("~~")} />
+            <span className="mx-1 h-5 w-px shrink-0 bg-border" />
+            <FormatButton label="Code" Icon={CodeIcon} onClick={() => wrap("`", "`", "code")} />
+            <FormatButton
+              label="Code block"
+              Icon={CodeBlockIcon}
+              onClick={() => wrap("```\n", "\n```", "code")}
+            />
+            <FormatButton
+              label="Link"
+              Icon={LinkIcon}
+              onClick={() => wrap("[", "](https://)", "link text")}
+            />
+            <span className="mx-1 h-5 w-px shrink-0 bg-border" />
+            <FormatButton label="Bulleted list" Icon={ListIcon} onClick={() => prefixLines(() => "- ")} />
+            <FormatButton
+              label="Numbered list"
+              Icon={ListOrderedIcon}
+              onClick={() => prefixLines((i) => `${i + 1}. `)}
+            />
+            <FormatButton label="Quote" Icon={QuoteIcon} onClick={() => prefixLines(() => "> ")} />
+          </div>
+        )}
+
+        <div className="flex items-end gap-1.5 sm:gap-2">
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            aria-label="Attach photos or files"
+            title="Attach photos or files"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-surface text-muted shadow-soft ring-1 ring-border transition hover:text-foreground active:scale-95"
+          >
+            <PlusIcon className="h-6 w-6" />
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              if (e.target.files?.length) void addFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+
+          <div
+            className={`flex min-w-0 flex-1 items-end rounded-[22px] bg-surface shadow-soft ring-1 transition focus-within:ring-2 focus-within:ring-accent/40 ${
+              dragging ? "ring-2 ring-accent-text ring-offset-2 ring-offset-background" : "ring-border"
+            }`}
+          >
+            <textarea
+              ref={textareaRef}
+              value={draft}
+              onChange={(e) => changeDraft(e.target.value, e.target.selectionStart)}
+              onClick={(e) => changeDraft(e.currentTarget.value, e.currentTarget.selectionStart)}
+              onPaste={(e) => {
+                if (e.clipboardData.files.length) {
+                  e.preventDefault();
+                  void addFiles(e.clipboardData.files);
+                }
+              }}
+              onKeyDown={(e) => {
+                if (mention && matches.length) {
+                  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                    e.preventDefault();
+                    const step = e.key === "ArrowDown" ? 1 : -1;
+                    setMention({ ...mention, index: (mention.index + step + matches.length) % matches.length });
+                    return;
+                  }
+                  if (e.key === "Enter" || e.key === "Tab") {
+                    e.preventDefault();
+                    pickMention(matches[mention.index]);
+                    return;
+                  }
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    setMention(null);
+                    return;
+                  }
+                }
+                if ((e.metaKey || e.ctrlKey) && (e.key === "b" || e.key === "i")) {
+                  e.preventDefault();
+                  wrap(e.key === "b" ? "**" : "*");
+                  return;
+                }
+                // Phones: Enter is a new line; send with the button.
+                const touch = window.matchMedia("(pointer: coarse)").matches;
+                if (e.key === "Enter" && !e.shiftKey && !touch && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  void send();
+                } else if (e.key === "Escape" && replyTo) {
+                  onCancelReply();
+                }
+              }}
+              rows={1}
+              maxLength={MAX_LENGTH}
+              placeholder={replyTo ? "Reply…" : "Message"}
+              aria-label="Message"
+              className="field-sizing-content block max-h-40 min-h-11 min-w-0 flex-1 resize-none bg-transparent py-2.5 pr-1 pl-4 text-base leading-6 outline-none placeholder:text-muted sm:text-sm sm:leading-6"
+            />
+            <div className="flex shrink-0 items-center pr-1 pb-0.5">
+              <ToolButton
+                label={showFormat ? "Hide formatting" : "Formatting"}
+                pressed={showFormat}
+                onClick={() => setShowFormat((v) => !v)}
+              >
+                <FormatIcon className="h-5 w-5" />
+              </ToolButton>
+              <ToolButton
+                label="Emoji"
+                pressed={emojiOpen}
+                onClick={() => setEmojiOpen((v) => !v)}
+                buttonRef={emojiButtonRef}
+              >
+                <SmileIcon className="h-5 w-5" />
+              </ToolButton>
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            disabled={!canSend}
+            aria-label="Send"
+            title="Send (Enter) · Shift + Enter for a new line"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent text-accent-foreground shadow-soft transition hover:bg-accent-hover active:scale-90 disabled:bg-surface disabled:text-muted disabled:ring-1 disabled:ring-border disabled:active:scale-100"
+          >
+            <ArrowUpIcon className="h-5 w-5" strokeWidth={2.4} />
+          </button>
         </div>
       </div>
     </form>
@@ -584,21 +642,24 @@ function ToolButton({
   label,
   pressed,
   onClick,
+  buttonRef,
   children,
 }: {
   label: string;
   pressed?: boolean;
   onClick: () => void;
+  buttonRef?: React.Ref<HTMLButtonElement>;
   children: React.ReactNode;
 }) {
   return (
     <button
+      ref={buttonRef}
       type="button"
       onClick={onClick}
       aria-label={label}
       aria-pressed={pressed}
       title={label}
-      className={`icon-btn h-8 w-8 pointer-coarse:h-10 pointer-coarse:w-10 ${pressed ? "bg-hover text-accent-text" : ""}`}
+      className={`icon-btn h-9 w-9 pointer-coarse:h-10 pointer-coarse:w-10 ${pressed ? "bg-accent-soft text-accent-text" : ""}`}
     >
       {children}
     </button>
@@ -645,19 +706,5 @@ function CodeBlockIcon(props: SVGProps<SVGSVGElement>) {
       <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
       <path d="m9.5 9.5-2.5 2.5 2.5 2.5M14.5 9.5l2.5 2.5-2.5 2.5" />
     </svg>
-  );
-}
-
-function TypingDots() {
-  return (
-    <span aria-hidden className="flex gap-0.5">
-      {[0, 1, 2].map((i) => (
-        <span
-          key={i}
-          className="h-1 w-1 animate-bounce rounded-full bg-muted"
-          style={{ animationDelay: `${i * 150}ms` }}
-        />
-      ))}
-    </span>
   );
 }

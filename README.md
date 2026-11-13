@@ -52,6 +52,10 @@ Open **SQL Editor → New query** and run each file in
 Both are safe to run again. If you re-run the first one, re-run the second one after
 it: the first resets policies and grants that the second tightens.
 
+Optional: [`20261113000000_conversation_previews.sql`](supabase/migrations/20261113000000_conversation_previews.sql)
+adds the last-message preview under each name in the chat list ("You: See you at 3").
+Without it the list shows status or member names instead. Run it after the others.
+
 ### 3. Configure auth
 
 In **Authentication → URL Configuration**:

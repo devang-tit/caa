@@ -12,8 +12,9 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { Avatar } from "@/components/avatar";
-import { PeopleIcon } from "@/components/icons";
+import { Avatar, GroupAvatar } from "@/components/avatar";
+import { ArrowDownIcon } from "@/components/icons";
+import { PersonAvatar } from "@/components/person-avatar";
 import { usePeople } from "@/components/session-provider";
 import { copyText } from "@/lib/compat";
 import { isChatVisible, onChatVisibilityChange } from "@/lib/embed";
@@ -36,9 +37,9 @@ import {
   type RoomMember,
 } from "@/lib/types";
 import { Composer, type OutgoingMessage } from "./composer";
-import { MessageItem, type Receipt } from "./message-item";
+import { MessageItem, type MenuMode, type Receipt } from "./message-item";
 import { MessageMenu, type MenuState } from "./message-menu";
-import { RoomHeader, type ConnectionStatus } from "./room-header";
+import { HEADER_HEIGHT, PINNED_BAR_HEIGHT, RoomHeader, type ConnectionStatus } from "./room-header";
 
 type PresenceMeta = { username: string };
 type TypingPayload = { userId: string; username: string };
@@ -123,6 +124,10 @@ export function ChatRoom({
   const [error, setError] = useState<string | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(focusId);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // Scrolled up from the newest message: show a "jump to latest" button,
+  // with how many messages arrived since.
+  const [awayFromBottom, setAwayFromBottom] = useState(false);
+  const [missed, setMissed] = useState(0);
 
   const channelRef = useRef<RealtimeChannel | null>(null);
   const lastTypingSentRef = useRef(0);
@@ -343,6 +348,7 @@ export function ChatRoom({
               arrivedDuringSyncRef.current?.add(msg.id);
               stopTyping(msg.user_id);
               setMessages((prev) => upsertMessage(prev, msg));
+              if (msg.user_id !== me.id && !stickToBottomRef.current) setMissed((n) => n + 1);
               if (msg.user_id !== me.id) requestMarkReadRef.current();
               if (msg.reply_to) void loadParents([msg.reply_to]);
             },
@@ -493,8 +499,20 @@ export function ChatRoom({
   function handleScroll() {
     const el = listRef.current;
     if (!el) return;
-    stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-    if (menu) setMenu(null);
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickToBottomRef.current = distance < 120;
+    const away = distance > 400;
+    if (away !== awayFromBottom) setAwayFromBottom(away);
+    if (stickToBottomRef.current && missed) setMissed(0);
+    if (menu?.mode === "menu") setMenu(null);
+  }
+
+  function scrollToLatest() {
+    const el = listRef.current;
+    if (!el) return;
+    stickToBottomRef.current = true;
+    setMissed(0);
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }
 
   // ── Actions ────────────────────────────────────────────────────────────────
@@ -710,8 +728,8 @@ export function ChatRoom({
     });
   }, []);
 
-  const openMenu = useCallback((message: ChatMessage, anchor: DOMRect) => {
-    setMenu({ message, anchor });
+  const openMenu = useCallback((message: ChatMessage, anchor: DOMRect, mode: MenuMode) => {
+    setMenu({ message, anchor, mode });
   }, []);
   const closeMenu = useCallback(() => setMenu(null), []);
   const changeEdit = useCallback(
@@ -757,8 +775,25 @@ export function ChatRoom({
   const typingNames = Object.values(typing);
   const menuMessage = menu ? (byId.get(menu.message.id) ?? null) : null;
 
+  const headerSpace = HEADER_HEIGHT + (pinned.length ? PINNED_BAR_HEIGHT : 0);
+  const showPeople = room.kind !== "direct";
+  const other = room.kind === "direct" ? memberList.find((m) => m.id !== me.id) : undefined;
+
+  // Group flags first: a message is a group's "tail" when the next one
+  // doesn't continue the group.
+  const groupedFlags = messages.map((message, i) => {
+    const prev = messages[i - 1];
+    return (
+      !!prev &&
+      (!hydrated || dayKey(prev.created_at) === dayKey(message.created_at)) &&
+      !message.reply_to &&
+      prev.user_id === message.user_id &&
+      time(message.created_at) - time(prev.created_at) < GROUP_WINDOW_MS
+    );
+  });
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="relative flex min-h-0 flex-1 flex-col">
       <RoomHeader
         room={room}
         title={title}
@@ -766,6 +801,7 @@ export function ChatRoom({
         members={memberList}
         here={here}
         status={status}
+        typing={room.kind === "direct" ? (typingNames.length ? "typing…" : "") : typingLabel(typingNames)}
         pinned={pinned}
         nameOf={nameOf}
         onJump={jumpTo}
@@ -775,33 +811,49 @@ export function ChatRoom({
       <div
         ref={listRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto overscroll-contain [--avatar-ring:var(--background)]"
+        style={{ paddingTop: headerSpace }}
+        className="flex-1 overflow-x-hidden overflow-y-auto overscroll-contain [--avatar-ring:var(--background)]"
       >
         {messages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
             {room.kind === "channel" ? (
               <Avatar id={room.id} name={title} shape="square" size="xl" />
+            ) : other ? (
+              <PersonAvatar userId={other.id} name={other.username} size="xl" />
             ) : (
-              <span className="flex h-16 w-16 items-center justify-center rounded-full bg-mine text-accent-text">
-                <PeopleIcon className="h-8 w-8" />
-              </span>
+              <GroupAvatar size="xl" />
             )}
-            <p className="font-semibold">
-              {room.kind === "channel"
-                ? `This is the start of ${title}`
-                : `This is the beginning of your chat with ${title}`}
-            </p>
-            <p className="text-sm text-muted">Send a message to get the conversation going.</p>
+            <div>
+              <p className="text-[17px] font-semibold">
+                {room.kind === "channel" ? `Welcome to #${title}` : title}
+              </p>
+              <p className="mt-1 max-w-xs text-sm text-muted">
+                {room.kind === "channel"
+                  ? "This is the very beginning of the channel."
+                  : room.kind === "direct"
+                    ? "This is the beginning of your conversation."
+                    : "This is the beginning of your group chat."}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                void sendMessage({ content: "👋", mentions: [], attachments: [], replyTo: null })
+              }
+              className="btn-secondary mt-1 bg-surface shadow-soft ring-1 ring-border"
+            >
+              <span className="text-lg leading-none">👋</span> Say hi
+            </button>
           </div>
         ) : (
-          <ol ref={contentRef} className="mx-auto flex max-w-5xl flex-col px-3 py-6 sm:px-6">
+          <ol ref={contentRef} className="mx-auto flex max-w-4xl flex-col px-3 pt-4 pb-3 sm:px-6">
             {hasOlder && (
               <li className="mb-4 flex justify-center">
                 <button
                   type="button"
                   onClick={loadOlder}
                   disabled={loadingOlder}
-                  className="btn-secondary px-3 py-1 text-xs"
+                  className="rounded-full bg-surface px-3.5 py-1.5 text-xs font-semibold text-muted shadow-soft ring-1 ring-border transition hover:text-foreground"
                 >
                   {loadingOlder ? "Loading…" : "Load earlier messages"}
                 </button>
@@ -813,12 +865,8 @@ export function ChatRoom({
               // appear once we're running in the browser.
               const newDay =
                 hydrated && (!prev || dayKey(prev.created_at) !== dayKey(message.created_at));
-              const grouped =
-                !!prev &&
-                !newDay &&
-                !message.reply_to &&
-                prev.user_id === message.user_id &&
-                time(message.created_at) - time(prev.created_at) < GROUP_WINDOW_MS;
+              const grouped = groupedFlags[i];
+              const tail = !groupedFlags[i + 1];
               const parentId = message.reply_to;
               const parent = parentId ? (byId.get(parentId) ?? parents[parentId] ?? null) : null;
               return (
@@ -828,6 +876,8 @@ export function ChatRoom({
                     message={message}
                     mine={message.user_id === me.id}
                     grouped={grouped}
+                    tail={tail}
+                    showPeople={showPeople}
                     authorName={nameOf(message.user_id)}
                     parent={parent}
                     parentAuthor={parent ? nameOf(parent.user_id) : ""}
@@ -850,16 +900,45 @@ export function ChatRoom({
                 </Fragment>
               );
             })}
+            {typingNames.length > 0 && (
+              <li className="animate-rise-in mt-3 flex items-end gap-2" aria-hidden>
+                {showPeople && <span className="w-8 shrink-0" />}
+                <span className="flex h-9 items-center gap-1 rounded-[20px] rounded-bl-[6px] bg-theirs px-4 shadow-soft ring-1 ring-black/[0.03] dark:ring-white/[0.04]">
+                  {[0, 1, 2].map((d) => (
+                    <span
+                      key={d}
+                      className="typing-dot h-2 w-2 rounded-full bg-muted"
+                      style={{ animationDelay: `${d * 160}ms` }}
+                    />
+                  ))}
+                </span>
+              </li>
+            )}
           </ol>
         )}
       </div>
+
+      {awayFromBottom && (
+        <button
+          type="button"
+          onClick={scrollToLatest}
+          aria-label={missed ? `${missed} new messages, jump to latest` : "Jump to latest"}
+          className="animate-rise-in absolute right-4 bottom-24 z-10 flex h-11 w-11 items-center justify-center rounded-full bg-surface text-foreground shadow-float ring-1 ring-border transition active:scale-90 sm:right-8"
+        >
+          <ArrowDownIcon className="h-5 w-5" />
+          {missed > 0 && (
+            <span className="absolute -top-1.5 -right-1 min-w-5 rounded-full bg-accent px-1 text-center text-[11px] leading-5 font-bold text-accent-foreground">
+              {missed > 99 ? "99+" : missed}
+            </span>
+          )}
+        </button>
+      )}
 
       <Composer
         roomId={room.id}
         candidates={mentionCandidates}
         replyTo={replyTo}
         replyAuthor={replyTo ? nameOf(replyTo.user_id) : ""}
-        typingLabel={typingLabel(typingNames)}
         error={error}
         onDismissError={() => setError(null)}
         onCancelReply={() => setReplyTo(null)}
@@ -869,10 +948,12 @@ export function ChatRoom({
 
       {menu && menuMessage && (
         <MessageMenu
-          state={{ anchor: menu.anchor, message: menuMessage }}
+          state={{ anchor: menu.anchor, message: menuMessage, mode: menu.mode }}
           mine={menuMessage.user_id === me.id}
           saved={savedIds.has(menuMessage.id)}
+          authorName={nameOf(menuMessage.user_id)}
           onClose={closeMenu}
+          onReact={(emoji) => void toggleReaction(menuMessage, emoji)}
           onReply={() => startReply(menuMessage)}
           onTogglePin={() => togglePin(menuMessage)}
           onToggleSave={() => toggleSave(menuMessage)}
@@ -920,10 +1001,10 @@ function dayLabel(iso: string) {
 
 function DayDivider({ iso }: { iso: string }) {
   return (
-    <li className="mb-1 mt-6 flex items-center gap-3 text-xs font-semibold text-muted first:mt-0">
-      <span className="h-px flex-1 bg-border" />
-      {dayLabel(iso)}
-      <span className="h-px flex-1 bg-border" />
+    <li className="mt-5 mb-2 flex justify-center first:mt-0">
+      <span className="rounded-full bg-surface/90 px-3 py-1 text-[11px] font-semibold text-muted shadow-soft ring-1 ring-border/70">
+        {dayLabel(iso)}
+      </span>
     </li>
   );
 }

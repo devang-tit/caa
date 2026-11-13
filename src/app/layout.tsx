@@ -41,10 +41,11 @@ export const viewport: Viewport = {
   // Android: the on-screen keyboard shrinks the page, so the message box
   // stays visible above it instead of being covered.
   interactiveWidget: "resizes-content",
-  // Browser bar / status bar color: matches the app's top bar.
+  // Browser bar / status bar color: matches the screens' header area
+  // (--pane in globals.css).
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#ebebeb" },
-    { media: "(prefers-color-scheme: dark)", color: "#141414" },
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#111216" },
   ],
 };
 

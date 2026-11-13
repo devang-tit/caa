@@ -17,13 +17,11 @@ export function InstallMenuItem() {
   // iPhone gets its instructions from the banner (and the notifications hint).
   if (state !== "prompt") return null;
   return (
-    <div className="border-t border-border p-1">
-      <button
-        type="button"
-        onClick={() => void install()}
-        className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition hover:bg-hover"
-      >
-        <DownloadIcon className="h-4 w-4 text-muted" />
+    <div className="rounded-2xl bg-background p-1.5 md:border-t md:border-border md:bg-transparent md:p-0 md:pt-1.5 md:rounded-none">
+      <button type="button" onClick={() => void install()} className="menu-row">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent-text md:h-auto md:w-auto md:bg-transparent md:text-muted">
+          <DownloadIcon className="h-[18px] w-[18px] md:h-4 md:w-4" />
+        </span>
         <span className="flex-1">
           Install app
           <span className="block text-xs text-muted">Opens full screen from your home screen</span>
@@ -50,23 +48,32 @@ export function InstallBanner() {
   }
 
   return (
-    <div className="mx-3 mb-2 flex items-center gap-3 rounded-lg border border-border bg-surface p-3 shadow-sm">
-      <DownloadIcon className="h-5 w-5 shrink-0 text-accent-text" />
-      <p className="min-w-0 flex-1 text-sm">
+    <div className="animate-rise-in mx-3 mb-2 flex items-center gap-3 rounded-2xl bg-linear-to-br from-accent-soft to-surface p-3 ring-1 ring-border">
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent text-accent-foreground shadow-soft">
+        <DownloadIcon className="h-5 w-5" />
+      </span>
+      <p className="min-w-0 flex-1 text-sm leading-snug">
         {state === "prompt" ? (
-          "Install Chat for full-screen use and faster loading."
+          <>
+            <strong className="block font-semibold">Get the app</strong>
+            <span className="text-muted">Full screen, faster to open.</span>
+          </>
         ) : (
           <>
-            Install Chat: tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>.
+            <strong className="block font-semibold">Add Chat to your Home Screen</strong>
+            <span className="text-muted">
+              Tap <strong className="font-semibold text-foreground">Share</strong>, then{" "}
+              <strong className="font-semibold text-foreground">Add to Home Screen</strong>.
+            </span>
           </>
         )}
       </p>
       {state === "prompt" && (
-        <button type="button" onClick={() => void install()} className="btn-primary px-2.5 py-1 text-xs">
+        <button type="button" onClick={() => void install()} className="btn-primary px-3.5 py-1.5 text-xs">
           Install
         </button>
       )}
-      <button type="button" onClick={dismiss} aria-label="Dismiss" title="Dismiss" className="icon-btn h-7 w-7">
+      <button type="button" onClick={dismiss} aria-label="Dismiss" title="Dismiss" className="icon-btn h-8 w-8 pointer-coarse:h-9 pointer-coarse:w-9">
         <CloseIcon className="h-4 w-4" />
       </button>
     </div>

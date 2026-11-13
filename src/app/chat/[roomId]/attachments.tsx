@@ -62,18 +62,21 @@ async function download(item: Attachment) {
   if (data?.signedUrl) window.location.assign(data.signedUrl);
 }
 
-const MAX_IMAGE_HEIGHT_PX = 256;
+const MAX_IMAGE_HEIGHT_PX = 300;
+const MAX_IMAGE_WIDTH_PX = 320;
 
 /**
- * Size for an image whose dimensions are known: as wide as fits, at most
- * 256px tall, so the space is reserved before it loads and the chat doesn't
- * jump. Older uploads have no dimensions and size themselves when they load.
+ * Size for an image whose dimensions are known: at most 320px wide and 300px
+ * tall (and never wider than the bubble), so the space is reserved before it
+ * loads and the chat doesn't jump. A fixed width with max-width (rather than
+ * a percentage) also lets the bubble shrink to the image. Older uploads have
+ * no dimensions and size themselves when they load.
  */
 function imageBox(image: Attachment) {
   if (!image.width || !image.height) return undefined;
   const ratio = image.width / image.height;
-  const width = Math.min(image.width, Math.round(MAX_IMAGE_HEIGHT_PX * ratio));
-  return { aspectRatio: `${image.width} / ${image.height}`, width: `min(100%, ${width}px)` };
+  const width = Math.min(image.width, MAX_IMAGE_WIDTH_PX, Math.round(MAX_IMAGE_HEIGHT_PX * ratio));
+  return { aspectRatio: `${image.width} / ${image.height}`, width: `${width}px`, maxWidth: "100%" };
 }
 
 export function Attachments({ items }: { items: Attachment[] }) {
@@ -82,7 +85,7 @@ export function Attachments({ items }: { items: Attachment[] }) {
   const files = items.filter((a) => !a.type.startsWith("image/"));
 
   return (
-    <div className="mt-1.5 space-y-1.5">
+    <div className="space-y-1.5 [&:not(:first-child)]:mt-1.5">
       {images.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {images.map((image) => {
@@ -94,7 +97,7 @@ export function Attachments({ items }: { items: Attachment[] }) {
                 target="_blank"
                 rel="noopener noreferrer"
                 style={box}
-                className="block max-w-full overflow-hidden rounded-md border border-border sm:max-w-sm"
+                className="block max-w-full overflow-hidden rounded-[14px] bg-black/5"
               >
                 {/* Signed, short-lived URLs: next/image's optimizer can't cache these. */}
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -108,7 +111,7 @@ export function Attachments({ items }: { items: Attachment[] }) {
                   className={
                     box
                       ? "block h-full w-full object-cover"
-                      : "max-h-64 max-w-full object-contain sm:max-w-sm"
+                      : "max-h-72 max-w-full object-contain sm:max-w-xs"
                   }
                 />
               </a>
@@ -116,7 +119,7 @@ export function Attachments({ items }: { items: Attachment[] }) {
               <span
                 key={image.path}
                 style={box}
-                className={`block animate-pulse rounded-md bg-hover ${box ? "max-w-full sm:max-w-sm" : "h-40 w-56"}`}
+                className={`block animate-pulse rounded-[14px] bg-black/10 dark:bg-white/10 ${box ? "max-w-full" : "h-40 w-56 max-w-full"}`}
                 aria-label={`Loading ${image.name}`}
               />
             );
@@ -126,9 +129,11 @@ export function Attachments({ items }: { items: Attachment[] }) {
       {files.map((file) => (
         <div
           key={file.path}
-          className="flex max-w-sm items-center gap-3 rounded-md border border-border bg-surface px-3 py-2"
+          className="flex w-72 max-w-full items-center gap-3 rounded-xl bg-black/[0.04] px-2.5 py-2 dark:bg-white/[0.06]"
         >
-          <FileIcon className="h-7 w-7 shrink-0 text-accent-text" />
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-foreground">
+            <FileIcon className="h-5 w-5" />
+          </span>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold">{file.name}</p>
             <p className="text-xs text-muted">{formatBytes(file.size)}</p>

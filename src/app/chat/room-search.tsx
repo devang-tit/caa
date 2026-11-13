@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { createContext, Suspense, use, useEffect, useState, type ReactNode } from "react";
+import { createContext, Suspense, use, useEffect, useId, useState, type ReactNode } from "react";
 import { SearchIcon } from "@/components/icons";
 import { useConversationsPromise, useMe, usePeople } from "@/components/session-provider";
 import { plainText } from "@/lib/rich-text";
@@ -24,14 +24,23 @@ export function useRoomSearch() {
   return context;
 }
 
-export function RoomSearchBox() {
+/**
+ * "bar": the desktop top-bar search, with a dropdown of matching chats and
+ * messages. "field": the search field under a phone screen's large title; the
+ * chat list itself shows the matches (see <MessageHits />).
+ */
+export function RoomSearchBox({ variant = "bar" }: { variant?: "bar" | "field" }) {
   const { query, setQuery } = useRoomSearch();
   const [open, setOpen] = useState(false);
+  const resultsId = useId();
   const trimmed = query.trim();
+  const dropdown = variant === "bar";
 
   return (
-    <div role="search" className="relative mx-auto w-full max-w-xl">
-      <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+    <div role="search" className={`relative w-full ${dropdown ? "mx-auto max-w-xl" : ""}`}>
+      <SearchIcon
+        className={`pointer-events-none absolute top-1/2 -translate-y-1/2 text-muted ${dropdown ? "left-3 h-4 w-4" : "left-3 h-[18px] w-[18px]"}`}
+      />
       <input
         type="search"
         value={query}
@@ -47,20 +56,27 @@ export function RoomSearchBox() {
             setOpen(false);
           }
         }}
-        placeholder="Search chats and messages"
+        placeholder={dropdown ? "Search chats and messages" : "Search"}
         aria-label="Search chats and messages"
-        role="combobox"
-        aria-autocomplete="list"
-        aria-expanded={open && trimmed.length >= 2}
-        aria-controls="search-results"
-        className="h-9 w-full rounded-md border border-transparent bg-surface pl-8 pr-3 text-base outline-none sm:h-8 sm:text-sm transition placeholder:text-muted hover:border-border focus:border-border focus:shadow-[inset_0_-2px_0_0_var(--accent-text)]"
+        {...(dropdown && {
+          role: "combobox",
+          "aria-autocomplete": "list" as const,
+          "aria-expanded": open && trimmed.length >= 2,
+          "aria-controls": resultsId,
+        })}
+        enterKeyHint="search"
+        className={
+          dropdown
+            ? "h-9 w-full rounded-full border border-transparent bg-surface pr-4 pl-9 text-sm shadow-soft outline-none transition placeholder:text-muted hover:border-border focus:border-accent-text/50 focus:ring-4 focus:ring-accent/15"
+            : "h-10 w-full rounded-xl bg-hover pr-3 pl-10 text-base outline-none transition placeholder:text-muted focus:bg-surface focus:ring-2 focus:ring-accent/30"
+        }
       />
-      {open && trimmed.length >= 2 && (
+      {dropdown && open && trimmed.length >= 2 && (
         <div
-          id="search-results"
+          id={resultsId}
           // Keep focus in the input while clicking a result.
           onMouseDown={(e) => e.preventDefault()}
-          className="absolute inset-x-0 top-full z-40 mt-1 max-h-[70vh] overflow-y-auto overscroll-contain rounded-lg border border-border bg-surface py-1 shadow-xl [--avatar-ring:var(--surface)]"
+          className="animate-rise-in absolute inset-x-0 top-full z-40 mt-2 max-h-[70vh] overflow-y-auto overscroll-contain rounded-2xl bg-surface py-1.5 shadow-float ring-1 ring-border [--avatar-ring:var(--surface)]"
         >
           <Suspense fallback={<p className="px-4 py-3 text-sm text-muted">Searching…</p>}>
             <SearchResults query={trimmed} onNavigate={() => setOpen(false)} />
@@ -74,6 +90,51 @@ export function RoomSearchBox() {
 type Hit = Pick<Message, "id" | "room_id" | "user_id" | "content" | "created_at">;
 
 function SearchResults({ query, onNavigate }: { query: string; onNavigate: () => void }) {
+  const me = useMe();
+  const conversations = use(useConversationsPromise());
+
+  const meId = me?.id ?? "";
+  const needle = query.toLowerCase();
+  const rooms = conversations
+    .map((c) => ({ ...c, title: conversationTitle(c, c.members, meId) }))
+    .filter((c) => c.title.toLowerCase().includes(needle))
+    .slice(0, 5);
+
+  return (
+    <>
+      {rooms.length > 0 && (
+        <Section label="Chats and channels">
+          {rooms.map((c) => (
+            <Link
+              key={c.id}
+              href={`/chat/${c.id}`}
+              onClick={onNavigate}
+              className="mx-1.5 flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm hover:bg-hover"
+            >
+              <span className="flex h-6 w-6 items-center justify-center rounded-md bg-accent-soft text-xs font-semibold text-accent-text">
+                {c.kind === "channel" ? "#" : "@"}
+              </span>
+              <span className="truncate">{c.title}</span>
+            </Link>
+          ))}
+        </Section>
+      )}
+      <MessageHits query={query} onNavigate={onNavigate} />
+    </>
+  );
+}
+
+/** Messages containing `query`, newest first. Suspends: use behind <Suspense>. */
+export function MessageHits({
+  query,
+  onNavigate,
+  inline = false,
+}: {
+  query: string;
+  onNavigate?: () => void;
+  /** Inside the chat list (phones) rather than the dropdown. */
+  inline?: boolean;
+}) {
   const me = useMe();
   const people = usePeople();
   const conversations = use(useConversationsPromise());
@@ -100,64 +161,55 @@ function SearchResults({ query, onNavigate }: { query: string; onNavigate: () =>
 
   const meId = me?.id ?? "";
   const titles = new Map(conversations.map((c) => [c.id, conversationTitle(c, c.members, meId)]));
-  const needle = query.toLowerCase();
-  const rooms = conversations
-    .filter((c) => (titles.get(c.id) ?? "").toLowerCase().includes(needle))
-    .slice(0, 5);
+  const pad = inline ? "px-4" : "mx-1.5 rounded-lg px-2.5";
 
   return (
-    <>
-      {rooms.length > 0 && (
-        <Section label="Chats and channels">
-          {rooms.map((c) => (
-            <Link
-              key={c.id}
-              href={`/chat/${c.id}`}
-              onClick={onNavigate}
-              className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-hover"
-            >
-              <span className="text-muted">{c.kind === "channel" ? "#" : "@"}</span>
-              <span className="truncate">{titles.get(c.id)}</span>
-            </Link>
-          ))}
-        </Section>
-      )}
-
-      <Section label="Messages">
-        {found?.query !== query ? (
-          <p className="px-4 py-2 text-sm text-muted">Searching…</p>
-        ) : found.hits.length === 0 ? (
-          <p className="px-4 py-2 text-sm text-muted">No messages match “{query}”.</p>
-        ) : (
-          found.hits.map((hit) => (
-            <Link
-              key={hit.id}
-              href={`/chat/${hit.room_id}?m=${hit.id}`}
-              onClick={onNavigate}
-              className="block px-4 py-2 hover:bg-hover"
-            >
-              <span className="flex items-baseline gap-2 text-xs text-muted">
-                <span className="font-semibold text-foreground">
-                  {people.get(hit.user_id)?.username ?? "Unknown"}
-                </span>
-                <span className="truncate">in {titles.get(hit.room_id) ?? "a chat"}</span>
-                <time className="ml-auto shrink-0" dateTime={hit.created_at}>
-                  {new Date(hit.created_at).toLocaleDateString([], { month: "short", day: "numeric" })}
-                </time>
+    <Section label="Messages" inline={inline}>
+      {found?.query !== query ? (
+        <p className="px-4 py-2 text-sm text-muted">Searching…</p>
+      ) : found.hits.length === 0 ? (
+        <p className="px-4 py-2 text-sm text-muted">No messages match “{query}”.</p>
+      ) : (
+        found.hits.map((hit) => (
+          <Link
+            key={hit.id}
+            href={`/chat/${hit.room_id}?m=${hit.id}`}
+            onClick={onNavigate}
+            className={`block py-2 transition hover:bg-hover active:bg-hover ${pad}`}
+          >
+            <span className="flex items-baseline gap-2 text-xs text-muted">
+              <span className="font-semibold text-foreground">
+                {people.get(hit.user_id)?.username ?? "Unknown"}
               </span>
-              <Snippet text={plainText(hit.content)} query={query} />
-            </Link>
-          ))
-        )}
-      </Section>
-    </>
+              <span className="truncate">in {titles.get(hit.room_id) ?? "a chat"}</span>
+              <time className="ml-auto shrink-0" dateTime={hit.created_at} suppressHydrationWarning>
+                {new Date(hit.created_at).toLocaleDateString([], { month: "short", day: "numeric" })}
+              </time>
+            </span>
+            <Snippet text={plainText(hit.content)} query={query} />
+          </Link>
+        ))
+      )}
+    </Section>
   );
 }
 
-function Section({ label, children }: { label: string; children: ReactNode }) {
+function Section({
+  label,
+  inline = false,
+  children,
+}: {
+  label: string;
+  inline?: boolean;
+  children: ReactNode;
+}) {
   return (
     <div className="py-1">
-      <p className="px-4 pb-1 pt-1.5 text-xs font-semibold text-muted">{label}</p>
+      <p
+        className={`px-4 pt-1.5 pb-1 text-xs font-semibold text-muted ${inline ? "uppercase tracking-wide" : ""}`}
+      >
+        {label}
+      </p>
       {children}
     </div>
   );
@@ -171,7 +223,7 @@ function Snippet({ text, query }: { text: string; query: string }) {
     <span className="line-clamp-1 text-sm">
       {start > 0 && "…"}
       {text.slice(start, index)}
-      <mark className="rounded bg-accent/20 px-0.5 text-foreground">
+      <mark className="rounded bg-accent/20 px-0.5 font-medium text-foreground">
         {text.slice(index, index + query.length)}
       </mark>
       {text.slice(index + query.length)}

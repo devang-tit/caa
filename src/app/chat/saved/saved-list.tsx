@@ -8,7 +8,7 @@ import { useConversationsPromise, usePeople } from "@/components/session-provide
 import { plainText } from "@/lib/rich-text";
 import { createClient } from "@/lib/supabase/client";
 import { conversationTitle, type SavedItem } from "@/lib/types";
-import { EmptyList } from "../page-shell";
+import { EmptyList, LIST_CLASS, ROW_DIVIDER } from "../page-shell";
 
 export function SavedList({ meId, initialItems }: { meId: string; initialItems: SavedItem[] }) {
   const people = usePeople();
@@ -33,7 +33,7 @@ export function SavedList({ meId, initialItems }: { meId: string; initialItems: 
       <EmptyList
         icon={<BookmarkIcon className="h-7 w-7" />}
         title="Nothing saved yet"
-        body="Open the … menu on any message and choose “Save this message” to keep it here."
+        body="Long-press a message (or use its … menu) and choose Save to keep it here."
       />
     );
   }
@@ -42,29 +42,34 @@ export function SavedList({ meId, initialItems }: { meId: string; initialItems: 
 
   return (
     <>
-      {error && <p className="mb-3 rounded-md bg-danger/10 px-3 py-2 text-sm text-danger">{error}</p>}
-      <ul className="overflow-hidden rounded-lg border border-border bg-surface">
+      {error && (
+        <p className="mx-4 mb-3 rounded-xl bg-danger/10 px-3 py-2 text-sm text-danger md:mx-0">{error}</p>
+      )}
+      <ul className={LIST_CLASS}>
         {items.map((item) => {
           const message = item.messages!;
           const snippet =
             plainText(message.content) || (message.attachments[0] ? `📎 ${message.attachments[0].name}` : "");
           return (
-            <li key={item.message_id} className="flex items-start gap-1 border-b border-border last:border-0">
-              <Link
-                href={`/chat/${message.room_id}?m=${message.id}`}
-                className="flex min-w-0 flex-1 gap-3 px-4 py-3 transition hover:bg-hover"
-              >
-                <PersonAvatar userId={message.user_id} />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm">
-                    <span className="font-semibold">
+            <li key={item.message_id} className="group/row relative flex gap-3 pl-4 transition hover:bg-hover active:bg-hover">
+              <span className="mt-3">
+                <PersonAvatar userId={message.user_id} size="lg" showStatus={false} />
+              </span>
+              <div className={`flex min-w-0 flex-1 items-start ${ROW_DIVIDER}`}>
+                {/* The link's ::before stretches over the whole row. */}
+                <Link
+                  href={`/chat/${message.room_id}?m=${message.id}`}
+                  className="min-w-0 flex-1 py-3 before:absolute before:inset-0"
+                >
+                  <span className="flex items-baseline gap-1 text-[15px] sm:text-sm">
+                    <span className="truncate font-semibold">
                       {people.get(message.user_id)?.username ?? "Unknown"}
                     </span>
                     {titles.get(message.room_id) && (
-                      <span className="text-muted"> in {titles.get(message.room_id)}</span>
+                      <span className="truncate text-muted">· {titles.get(message.room_id)}</span>
                     )}
-                  </p>
-                  <p className="mt-0.5 line-clamp-3 text-sm">{snippet}</p>
+                  </span>
+                  <span className="mt-0.5 line-clamp-3 text-[15px] leading-snug sm:text-sm">{snippet}</span>
                   <time
                     dateTime={message.created_at}
                     suppressHydrationWarning
@@ -77,17 +82,17 @@ export function SavedList({ meId, initialItems }: { meId: string; initialItems: 
                       minute: "2-digit",
                     })}
                   </time>
-                </div>
-              </Link>
-              <button
-                type="button"
-                onClick={() => unsave(item)}
-                aria-label="Remove from saved"
-                title="Remove from saved"
-                className="icon-btn m-2 text-accent-text"
-              >
-                <BookmarkIcon className="h-4 w-4 fill-current" />
-              </button>
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => unsave(item)}
+                  aria-label="Remove from saved"
+                  title="Remove from saved"
+                  className="icon-btn relative z-10 m-2 text-accent-text"
+                >
+                  <BookmarkIcon className="h-[18px] w-[18px] fill-current" />
+                </button>
+              </div>
             </li>
           );
         })}

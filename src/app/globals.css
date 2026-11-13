@@ -1,46 +1,71 @@
 @import "tailwindcss";
 
-/* Teams-inspired palette: neutral greys, a purple brand accent, and
-   tinted bubbles for your own messages. Dark mode mirrors every token. */
+/* Design tokens. A cool neutral canvas, white cards and sheets, one indigo
+   brand color, and gradient bubbles for your own messages. Dark mode
+   mirrors every token. Components only use these, never raw colors. */
 :root {
   color-scheme: light;
-  --rail: #ebebeb;
-  --pane: #f5f5f5;
-  --pane-hover: #ebebeb;
-  --background: #f5f5f5;
-  --foreground: #242424;
+  --rail: #eef0f5;
+  --pane: #ffffff;
+  --pane-hover: #f4f5f9;
+  --background: #f3f4f8;
+  --foreground: #0f1222;
   --surface: #ffffff;
-  --border: #e0e0e0;
-  --muted: #616161;
-  --hover: #f0f0f0;
-  --accent: #5b5fc7;
-  --accent-hover: #4f52b2;
+  --border: #e4e6ee;
+  --muted: #676b7e;
+  --hover: #eff0f5;
+  --accent: #5457e6;
+  --accent-hover: #4447d2;
   --accent-foreground: #ffffff;
-  --accent-text: #5b5fc7;
-  --mine: #e8ebfa;
-  --danger: #c4314b;
-  --success: #107c10;
+  --accent-text: #4a4dd6;
+  --accent-soft: #ecedfd;
+  --danger: #e5484d;
+  --success: #2f9e66;
+  --warning: #e8a317;
+  /* Translucent bars that content scrolls under. */
+  --glass: rgb(255 255 255 / 0.76);
+  /* Message bubbles: theirs, and yours with the colors used inside it. */
+  --theirs: #ffffff;
+  --mine: linear-gradient(135deg, #6a6df3 0%, #5154e4 100%);
+  --mine-foreground: #ffffff;
+  --mine-muted: rgb(255 255 255 / 0.74);
+  --mine-accent: #ffffff;
+  --mine-accent-foreground: #5154e4;
+  --mine-border: rgb(255 255 255 / 0.3);
+  --shadow: 0 1px 2px rgb(16 18 35 / 0.06), 0 1px 1px rgb(16 18 35 / 0.04);
+  --shadow-lg: 0 12px 32px -8px rgb(16 18 35 / 0.18), 0 2px 6px rgb(16 18 35 / 0.06);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --rail: #141414;
-    --pane: #1f1f1f;
-    --pane-hover: #292929;
-    --background: #1f1f1f;
-    --foreground: #f5f5f5;
-    --surface: #292929;
-    --border: #3d3d3d;
-    --muted: #adadad;
-    --hover: #333333;
-    --accent: #5b5fc7;
-    --accent-hover: #6e72d6;
+    --rail: #0b0c10;
+    --pane: #111216;
+    --pane-hover: #1a1b21;
+    --background: #0b0c10;
+    --foreground: #eceef4;
+    --surface: #17181e;
+    --border: #262832;
+    --muted: #8f92a3;
+    --hover: #1f2028;
+    --accent: #6366f1;
+    --accent-hover: #7477f6;
     --accent-foreground: #ffffff;
-    --accent-text: #9ea2ff;
-    --mine: #34355a;
-    --danger: #f1707b;
-    --success: #54b054;
+    --accent-text: #a5a8ff;
+    --accent-soft: rgb(99 102 241 / 0.16);
+    --danger: #ff6b70;
+    --success: #3ecf8e;
+    --warning: #f5b83d;
+    --glass: rgb(17 18 22 / 0.74);
+    --theirs: #1e1f27;
+    --mine: linear-gradient(135deg, #6366f1 0%, #4f51dc 100%);
+    --mine-foreground: #ffffff;
+    --mine-muted: rgb(255 255 255 / 0.72);
+    --mine-accent: #ffffff;
+    --mine-accent-foreground: #4f51dc;
+    --mine-border: rgb(255 255 255 / 0.25);
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-lg: 0 16px 40px -8px rgb(0 0 0 / 0.6), 0 2px 6px rgb(0 0 0 / 0.3);
   }
 }
 
@@ -58,57 +83,238 @@
   --color-accent-hover: var(--accent-hover);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent-text: var(--accent-text);
-  --color-mine: var(--mine);
+  --color-accent-soft: var(--accent-soft);
   --color-danger: var(--danger);
   --color-success: var(--success);
-  --font-sans: "Segoe UI Variable Text", "Segoe UI", var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-warning: var(--warning);
+  --color-theirs: var(--theirs);
+  --shadow-soft: var(--shadow);
+  --shadow-float: var(--shadow-lg);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-sans), system-ui, sans-serif;
+  font-family: var(--font-sans);
+  font-feature-settings: "cv11", "ss01";
   /* No grey flash on tap (iOS/Android). */
   -webkit-tap-highlight-color: transparent;
 }
 
 * {
   scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
 
 @layer base {
-  :where(a, button, [tabindex]):focus-visible {
+  :where(a, button, [tabindex], summary):focus-visible {
     outline: 2px solid var(--accent-text);
-    outline-offset: 1px;
+    outline-offset: 2px;
+  }
+
+  :where(button):not(:disabled) {
+    cursor: pointer;
   }
 }
 
+/* Frosted bar: content scrolls underneath and shows through, blurred. */
+@utility glass {
+  background-color: var(--glass);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+}
+
 @layer components {
-  /* Teams-style field: flat box that gains a brand underline on focus. */
-  /* 16px on phones: iPhone zooms the whole page into smaller fields. */
+  /* Filled field with a soft brand ring on focus. 16px on phones: iPhone
+     zooms the whole page into smaller fields. */
   .input {
-    @apply w-full rounded-md border border-border bg-surface px-3 py-2 text-base outline-none sm:text-sm transition placeholder:text-muted focus:shadow-[inset_0_-2px_0_0_var(--accent-text)];
+    @apply w-full rounded-xl border border-transparent bg-hover px-3.5 py-2.5 text-base outline-none transition placeholder:text-muted focus:border-accent-text/50 focus:bg-surface focus:ring-4 focus:ring-accent/15 sm:text-sm;
   }
 
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 rounded-md bg-accent px-3 py-1.5 text-sm font-semibold text-accent-foreground transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-accent-foreground shadow-soft transition hover:bg-accent-hover active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100;
   }
 
   .btn-secondary {
-    @apply inline-flex items-center justify-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 text-sm font-semibold transition hover:bg-hover;
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-hover px-4 py-2 text-sm font-semibold transition hover:bg-border/70 active:scale-[0.98];
   }
 
   /* Finger-sized (40px) on touch screens. */
   .icon-btn {
-    @apply inline-flex h-8 w-8 shrink-0 pointer-coarse:h-10 pointer-coarse:w-10 items-center justify-center rounded-md text-muted transition hover:bg-hover hover:text-foreground;
+    @apply inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted transition hover:bg-hover hover:text-foreground active:scale-95 pointer-coarse:h-10 pointer-coarse:w-10;
+  }
+
+  /* Round floating action button. */
+  .fab {
+    @apply inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-accent text-accent-foreground shadow-float transition hover:bg-accent-hover active:scale-95;
+  }
+
+  /* Rows inside sheets and menus. */
+  .menu-row {
+    @apply flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[15px] outline-none transition hover:bg-hover focus-visible:bg-hover active:bg-hover sm:text-sm;
+  }
+
+  /* Small handle at the top of a bottom sheet (phones only). */
+  .grabber {
+    @apply mx-auto mt-2 mb-1 h-1.5 w-10 rounded-full bg-border md:hidden;
+  }
+
+  /* Your message bubble: the gradient, plus every token re-pointed so text,
+     links, mentions, quotes and file cards inside stay readable on it. */
+  .bubble-mine {
+    background: var(--mine);
+    --foreground: var(--mine-foreground);
+    --muted: var(--mine-muted);
+    --accent: var(--mine-accent);
+    --accent-foreground: var(--mine-accent-foreground);
+    --accent-text: var(--mine-accent);
+    --border: var(--mine-border);
+    --hover: rgb(255 255 255 / 0.12);
+    --surface: rgb(255 255 255 / 0.12);
+    --avatar-ring: transparent;
+    color: var(--foreground);
+  }
+}
+
+/* ── Sheets: bottom sheets on phones, centered/anchored cards on desktop ──
+   Used on <dialog class="sheet"> and [popover].sheet. They slide up from the
+   bottom on phones and fade in on larger screens. */
+.sheet {
+  transition:
+    transform 0.38s var(--ease-spring),
+    opacity 0.2s ease,
+    overlay 0.38s allow-discrete,
+    display 0.38s allow-discrete;
+}
+
+.sheet::backdrop {
+  background: rgb(8 9 14 / 0.42);
+  transition:
+    opacity 0.25s ease,
+    overlay 0.38s allow-discrete,
+    display 0.38s allow-discrete;
+}
+
+dialog.sheet:not([open]),
+[popover].sheet:not(:popover-open) {
+  transform: translateY(100%);
+}
+
+dialog.sheet:not([open])::backdrop,
+[popover].sheet:not(:popover-open)::backdrop {
+  opacity: 0;
+}
+
+@starting-style {
+  dialog.sheet[open],
+  [popover].sheet:popover-open {
+    transform: translateY(100%);
+  }
+  dialog.sheet[open]::backdrop,
+  [popover].sheet:popover-open::backdrop {
+    opacity: 0;
+  }
+}
+
+@media (min-width: 48rem) {
+  .sheet::backdrop {
+    background: rgb(8 9 14 / 0.28);
+  }
+  [popover].sheet::backdrop {
+    background: transparent;
+  }
+  dialog.sheet:not([open]),
+  [popover].sheet:not(:popover-open) {
+    transform: translateY(6px) scale(0.98);
+    opacity: 0;
+  }
+  @starting-style {
+    dialog.sheet[open],
+    [popover].sheet:popover-open {
+      transform: translateY(6px) scale(0.98);
+      opacity: 0;
+    }
+  }
+}
+
+/* Long-press and swipe on messages: no text selection or iOS link callout. */
+@media (pointer: coarse) {
+  .touch-message {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+.animate-rise-in {
+  animation: rise-in 0.28s var(--ease-spring) backwards;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.2s ease;
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+.animate-sheet-up {
+  animation: sheet-up 0.38s var(--ease-spring);
+}
+
+@keyframes typing-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+.typing-dot {
+  animation: typing-dot 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet,
+  .sheet::backdrop {
+    transition: none;
+  }
+  .animate-rise-in,
+  .animate-fade-in,
+  .animate-sheet-up,
+  .typing-dot {
+    animation: none;
   }
 }
 
 /* Inside a host app's chat widget (data-embed is set by the script in
    app/layout.tsx): match the host's look. White panels, lime #97d700 brand
    with white text, grey #82849f secondary text, Nunito. Always light;
-   html[data-embed] outranks the dark-mode :root block. */
+   html[data-embed] outranks the dark-mode :root block. Your bubbles stay a
+   light lime tint: white text on lime isn't readable. */
 html[data-embed="host"] {
   color-scheme: light;
   --rail: #ffffff;
@@ -124,9 +330,20 @@ html[data-embed="host"] {
   --accent-hover: #88c200;
   --accent-foreground: #ffffff;
   --accent-text: #5a8700;
-  --mine: #eef7d6;
+  --accent-soft: #eef7d6;
   --danger: #f5365c;
   --success: #2dce89;
+  --warning: #fb6340;
+  --glass: rgb(255 255 255 / 0.88);
+  --theirs: #ffffff;
+  --mine: #eef7d6;
+  --mine-foreground: #212529;
+  --mine-muted: #6f7186;
+  --mine-accent: #4a7000;
+  --mine-accent-foreground: #ffffff;
+  --mine-border: #d9e8b4;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+  --shadow-lg: 0 12px 32px -8px rgb(0 0 0 / 0.15);
 }
 
 html[data-embed="host"] body {

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
+import { LargeTitleScreen } from "./large-title";
 
-/** Header + scrolling body used by the Activity and Saved views. */
+/** Large-title screen used by the Activity and Saved views. */
 export function PageShell({
   title,
   description,
@@ -11,25 +12,31 @@ export function PageShell({
   children: ReactNode;
 }) {
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-surface px-5">
-        <h1 className="font-semibold">{title}</h1>
-        {description && <p className="hidden truncate text-sm text-muted sm:block">{description}</p>}
-      </header>
-      <div className="flex-1 overflow-y-auto overscroll-contain [--avatar-ring:var(--surface)]">
-        <div className="mx-auto max-w-3xl px-3 py-5 sm:px-6">{children}</div>
-      </div>
+    <div className="flex min-h-0 flex-1 flex-col bg-pane md:bg-background">
+      <LargeTitleScreen title={title} description={description} className="[--avatar-ring:var(--pane)] md:[--avatar-ring:var(--surface)]">
+        <div className="mx-auto max-w-3xl pb-32 md:px-6 md:pt-2 md:pb-8">{children}</div>
+      </LargeTitleScreen>
     </div>
   );
 }
 
+/**
+ * The list container for those views: edge-to-edge rows with inset dividers
+ * on phones, a rounded card on desktop.
+ */
+export const LIST_CLASS =
+  "md:divide-y md:divide-border/70 md:overflow-hidden md:rounded-2xl md:bg-surface md:shadow-soft md:ring-1 md:ring-border";
+
+/** Inset hairline under a row's text on phones (put `group/row` on the <li>). */
+export const ROW_DIVIDER = "border-border/70 max-md:border-b max-md:group-last/row:border-0";
+
 export function ListSkeleton() {
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-surface">
+    <div className={LIST_CLASS}>
       {[0, 1, 2, 3].map((i) => (
-        <div key={i} className="flex gap-3 border-b border-border px-4 py-3 last:border-0">
-          <div className="h-8 w-8 animate-pulse rounded-full bg-hover" />
-          <div className="flex-1 space-y-2">
+        <div key={i} className="flex gap-3 px-4 py-3.5">
+          <div className="h-10 w-10 animate-pulse rounded-full bg-hover" />
+          <div className="flex-1 space-y-2 pt-1.5">
             <div className="h-3 w-1/2 animate-pulse rounded bg-hover" />
             <div className="h-3 w-3/4 animate-pulse rounded bg-hover" />
           </div>
@@ -41,11 +48,11 @@ export function ListSkeleton() {
 
 export function EmptyList({ icon, title, body }: { icon: ReactNode; title: string; body: string }) {
   return (
-    <div className="flex flex-col items-center gap-2 py-16 text-center">
-      <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-mine text-accent-text">
+    <div className="flex flex-col items-center gap-2 px-6 py-16 text-center">
+      <span className="mb-1 flex h-16 w-16 items-center justify-center rounded-3xl bg-accent-soft text-accent-text">
         {icon}
       </span>
-      <p className="font-semibold">{title}</p>
+      <p className="text-[17px] font-semibold">{title}</p>
       <p className="max-w-xs text-sm text-muted">{body}</p>
     </div>
   );

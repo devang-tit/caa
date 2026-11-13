@@ -21,12 +21,40 @@ export type Profile = {
 
 export type Member = { id: string; username: string };
 
+/** The newest message in a conversation, for the chat list preview. */
+export type LastMessage = {
+  id: string;
+  user_id: string;
+  /** First 160 characters, markdown. */
+  content: string;
+  /** How many files it has, and the first one. */
+  attachments: number;
+  attachment: Pick<Attachment, "name" | "type"> | null;
+};
+
 export type Conversation = Room & {
   last_message_at: string | null;
   unread_count: number;
   /** Everyone in a direct/group chat (including you); empty for channels. */
   members: Member[];
+  /**
+   * Missing until 20261113000000_conversation_previews.sql has run; null when
+   * there are no messages yet.
+   */
+  last_message?: LastMessage | null;
 };
+
+/** The chat list preview for a message that just arrived. */
+export function toLastMessage(message: Pick<Message, "id" | "user_id" | "content" | "attachments">): LastMessage {
+  const first = message.attachments[0];
+  return {
+    id: message.id,
+    user_id: message.user_id,
+    content: message.content.slice(0, 160),
+    attachments: message.attachments.length,
+    attachment: first ? { name: first.name, type: first.type } : null,
+  };
+}
 
 export type RoomMember = {
   room_id: string;
